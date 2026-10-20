@@ -202,10 +202,12 @@ function updatePreview() {
 
   if (fullTankSelected && intervalDistance !== null && intervalDistance > 0 && totalIntervalVolume > 0) {
     prevKmL.textContent = disp(intervalDistance / totalIntervalVolume, 'km/L');
+    prevKmL.classList.remove('status');
     prevKmL.classList.add('live');
   } else {
-    prevKmL.textContent = fullTankSelected ? 'Need prior full tank' : 'Full tank only';
+    prevKmL.textContent = fullTankSelected ? 'Need prior full tank' : 'Select full tank';
     prevKmL.classList.remove('live');
+    prevKmL.classList.add('status');
   }
 }
 [inputPrice, inputOdo, inputAmount, inputDate].forEach(el => el.addEventListener('input', updatePreview));

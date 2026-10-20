@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>FuelTrack</title>
+  <meta name="description" content="Track fuel expenses, mileage and running costs." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Fixed Header ──────────────────────────────────── -->
+  <header class="header" id="appHeader">
+    <div class="header-inner">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="8" fill="url(#bg)"/>
+            <path d="M8 20c0-3 2-5 6-5s6 2 6 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M14 15V9" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M10 12l4-4 4 4" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="20" cy="10" r="3" fill="#FFD60A"/>
+            <defs>
+              <linearGradient id="bg" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#3A8EF6"/>
+                <stop offset="1" stop-color="#6F3AFA"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">FuelTrack</h1>
+          <p class="brand-sub">Fuel Expense Tracker</p>
+        </div>
+      </div>
+      <div class="header-pills">
+        <div class="hpill">
+          <span class="hpill-val" id="totalEntriesVal">0</span>
+          <span class="hpill-lbl">fills</span>
+        </div>
+        <div class="hpill hpill-accent">
+          <span class="hpill-val" id="totalSpendVal">₹0</span>
+          <span class="hpill-lbl">spent</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Tab Views ─────────────────────────────────────── -->
+  <main class="main" id="mainArea">
+
+    <!-- TAB 1 · ADD ─────────────────────────────────────── -->
+    <div class="tab-view active" id="tab-add">
+      <div class="scroll-area">
+        <div class="page-title-row">
+          <h2 class="page-title">Log Fill-up</h2>
+          <span class="page-date" id="todayLabel"></span>
+        </div>
+
+        <form id="addForm" novalidate>
+
+          <!-- Form Fields Group -->
+          <div class="card form-card">
+            <div class="form-row">
+              <label class="form-label" for="inputDate">Date</label>
+              <input class="form-val-input" type="date" id="inputDate" required />
+            </div>
+            <div class="row-sep"></div>
+            <div class="form-row">
+              <label class="form-label" for="inputPrice">Fuel Price</label>
+              <div class="input-suffix-wrap">
+                <input class="form-val-input" type="number" id="inputPrice" placeholder="0.00" step="0.01" min="0" inputmode="decimal" required />
+                <span class="input-suffix">Rs/L</span>
+              </div>
+            </div>
+            <div class="row-sep"></div>
+            <div class="form-row">
+              <label class="form-label" for="inputOdo">
+                Odometer
+                <span class="label-note">current reading</span>
+              </label>
+              <div class="input-suffix-wrap">
+                <input class="form-val-input" type="number" id="inputOdo" placeholder="e.g. 12450" step="1" min="0" inputmode="decimal" />
+                <span class="input-suffix">km</span>
+              </div>
+            </div>
+            <div class="row-sep"></div>
+            <div class="form-row">
+              <label class="form-label" for="inputAmount">Amount Paid</label>
+              <div class="input-suffix-wrap">
+                <span class="input-prefix">₹</span>
+                <input class="form-val-input" type="number" id="inputAmount" placeholder="0.00" step="0.01" min="0" inputmode="decimal" required />
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Preview -->
+          <div class="live-preview-label">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>
+            Calculated instantly
+          </div>
+          <div class="card preview-card preview-grid-2x2">
+            <div class="preview-stat">
+              <span class="ps-icon ps-purple">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+              </span>
+              <div class="ps-info">
+                <span class="ps-label">Distance</span>
+                <span class="ps-val" id="prevDist">—</span>
+              </div>
+            </div>
+            <div class="preview-stat">
+              <span class="ps-icon ps-blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22l3-3m0 0l5-5m-5 5l5-5m0 0l3-3m-3 3l3 3m0-6l5-5"/><circle cx="19" cy="5" r="3"/></svg>
+              </span>
+              <div class="ps-info">
+                <span class="ps-label">Volume Filled</span>
+                <span class="ps-val" id="prevVolume">—</span>
+              </div>
+            </div>
+            <div class="preview-stat">
+              <span class="ps-icon ps-orange">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>
+              </span>
+              <div class="ps-info">
+                <span class="ps-label">Running Cost</span>
+                <span class="ps-val" id="prevRsKm">—</span>
+              </div>
+            </div>
+            <div class="preview-stat">
+              <span class="ps-icon ps-green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </span>
+              <div class="ps-info">
+                <span class="ps-label">Mileage</span>
+                <span class="ps-val" id="prevKmL">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="form-btns">
+            <button type="button" class="btn-ghost" id="clearBtn">Clear</button>
+            <button type="submit" class="btn-primary" id="submitBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Entry
+            </button>
+          </div>
+        </form>
+        <div class="scroll-bottom-pad"></div>
+      </div>
+    </div>
+
+    <!-- TAB 2 · INSIGHTS ────────────────────────────────── -->
+    <div class="tab-view" id="tab-insights">
+      <div class="scroll-area">
+        <div class="page-title-row">
+          <h2 class="page-title">Insights</h2>
+        </div>
+
+        <div id="insightsEmpty" class="empty-state">
+          <div class="empty-illo">
+            <svg viewBox="0 0 80 80" fill="none">
+              <circle cx="40" cy="40" r="38" fill="rgba(58,142,246,0.08)" stroke="rgba(58,142,246,0.15)" stroke-width="1.5"/>
+              <rect x="18" y="46" width="10" height="18" rx="3" fill="rgba(58,142,246,0.4)"/>
+              <rect x="33" y="34" width="10" height="30" rx="3" fill="rgba(58,142,246,0.6)"/>
+              <rect x="48" y="22" width="10" height="42" rx="3" fill="rgba(58,142,246,0.85)"/>
+            </svg>
+          </div>
+          <p class="empty-title">No data yet</p>
+          <p class="empty-sub">Add your first fill-up to see insights</p>
+        </div>
+
+        <div id="insightsContent" class="hidden">
+          <!-- Big KPIs -->
+          <div class="kpi-grid">
+            <div class="kpi-card kpi-wide">
+              <div class="kpi-top">
+                <span class="kpi-icon kpi-blue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg>
+                </span>
+                <span class="kpi-label">Avg Mileage</span>
+              </div>
+              <div class="kpi-value" id="avgKmL">—</div>
+              <div class="kpi-unit">km / litre</div>
+            </div>
+            <div class="kpi-card kpi-wide">
+              <div class="kpi-top">
+                <span class="kpi-icon kpi-orange">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </span>
+                <span class="kpi-label">Running Cost</span>
+              </div>
+              <div class="kpi-value" id="avgRsKm">—</div>
+              <div class="kpi-unit">₹ per km</div>
+            </div>
+          </div>
+
+          <div class="section-label">Averages per fill</div>
+          <div class="card stat-list">
+            <div class="stat-row">
+              <div class="stat-left">
+                <span class="stat-dot dot-blue"></span>
+                <span class="stat-name">Cost per Fill</span>
+              </div>
+              <span class="stat-val" id="avgCostFill">—</span>
+            </div>
+            <div class="row-sep"></div>
+            <div class="stat-row">
+              <div class="stat-left">
+                <span class="stat-dot dot-purple"></span>
+                <span class="stat-name">Distance per Fill</span>
+              </div>
+              <span class="stat-val" id="avgDistance">—</span>
+            </div>
+            <div class="row-sep"></div>
+            <div class="stat-row">
+              <div class="stat-left">
+                <span class="stat-dot dot-teal"></span>
+                <span class="stat-name">Volume per Fill</span>
+              </div>
+              <span class="stat-val" id="avgVolume">—</span>
+            </div>
+          </div>
+
+          <div class="section-label">All time totals</div>
+          <div class="card stat-list">
+            <div class="stat-row">
+              <div class="stat-left">
+                <span class="stat-dot dot-green"></span>
+                <span class="stat-name">Total Spent</span>
+              </div>
+              <span class="stat-val stat-big" id="totalSpentIns">—</span>
+            </div>
+            <div class="row-sep"></div>
+            <div class="stat-row">
+              <div class="stat-left">
+                <span class="stat-dot dot-orange"></span>
+                <span class="stat-name">Total Distance</span>
+              </div>
+              <span class="stat-val" id="totalDistance">—</span>
+            </div>
+            <div class="row-sep"></div>
+            <div class="stat-row">
+              <div class="stat-left">
+                <span class="stat-dot dot-red"></span>
+                <span class="stat-name">Total Volume Used</span>
+              </div>
+              <span class="stat-val" id="totalVolume">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="scroll-bottom-pad"></div>
+      </div>
+    </div>
+
+    <!-- TAB 3 · LOG ──────────────────────────────────────── -->
+    <div class="tab-view" id="tab-log">
+      <div class="scroll-area">
+        <div class="page-title-row">
+          <h2 class="page-title">Log</h2>
+          <button class="btn-text-red" id="clearAllBtn">Clear all</button>
+        </div>
+
+        <div id="logEmpty" class="empty-state">
+          <div class="empty-illo">
+            <svg viewBox="0 0 80 80" fill="none">
+              <circle cx="40" cy="40" r="38" fill="rgba(58,142,246,0.08)" stroke="rgba(58,142,246,0.15)" stroke-width="1.5"/>
+              <rect x="22" y="20" width="36" height="44" rx="5" fill="rgba(58,142,246,0.12)" stroke="rgba(58,142,246,0.25)" stroke-width="1.5"/>
+              <line x1="29" y1="31" x2="51" y2="31" stroke="rgba(58,142,246,0.5)" stroke-width="2" stroke-linecap="round"/>
+              <line x1="29" y1="39" x2="51" y2="39" stroke="rgba(58,142,246,0.35)" stroke-width="2" stroke-linecap="round"/>
+              <line x1="29" y1="47" x2="42" y2="47" stroke="rgba(58,142,246,0.25)" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <p class="empty-title">No entries yet</p>
+          <p class="empty-sub">Your fill-up history will appear here</p>
+        </div>
+
+        <div id="logContent" class="hidden">
+          <div id="logCards"></div>
+        </div>
+        <div class="scroll-bottom-pad"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Bottom Nav ────────────────────────────────────── -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-tab="tab-add" id="navAdd">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <line x1="12" y1="8" x2="12" y2="16"/>
+          <line x1="8" y1="12" x2="16" y2="12"/>
+        </svg>
+      </span>
+      <span class="nav-label">Add</span>
+    </button>
+    <button class="nav-item" data-tab="tab-insights" id="navInsights">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="12" width="4" height="9" rx="1"/>
+          <rect x="10" y="7" width="4" height="14" rx="1"/>
+          <rect x="17" y="3" width="4" height="18" rx="1"/>
+        </svg>
+      </span>
+      <span class="nav-label">Insights</span>
+    </button>
+    <button class="nav-item" data-tab="tab-log" id="navLog">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+          <rect x="9" y="3" width="6" height="4" rx="1"/>
+          <line x1="9" y1="12" x2="15" y2="12"/>
+          <line x1="9" y1="16" x2="13" y2="16"/>
+        </svg>
+      </span>
+      <span class="nav-label">Log</span>
+    </button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -44,21 +44,44 @@ let entries = load();
 // We sort by date to calculate distances correctly, then map
 // back to insertion indices for editing/deleting.
 
+function isFullTank(entry) {
+  // Existing entries without this field retain the old full-tank assumption.
+  return entry.fullTank !== false;
+}
+
 function getEnrichedEntries() {
-  // Sort by date ascending, keep original index
   const sorted = entries
     .map((e, i) => ({ ...e, origIdx: i }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date) || a.origIdx - b.origIdx);
+
+  let lastFullTank = null;
+  let litresSinceFullTank = 0;
+  let spendSinceFullTank = 0;
 
   return sorted.map((e, si) => {
     const prev = sorted[si - 1] || null;
     const dist = (prev && e.odo != null && prev.odo != null && e.odo > prev.odo)
       ? fmt2(e.odo - prev.odo)
       : null;
-    const volume  = fmt2(e.amount / e.price);
-    const rsPerKm = (dist !== null) ? fmt2(e.amount / dist) : null;
-    const kmPerL  = (dist !== null && volume) ? fmt2(dist / volume)  : null;
-    return { ...e, dist, volume, rsPerKm, kmPerL };
+    const volume = e.amount / e.price;
+    litresSinceFullTank += volume;
+    spendSinceFullTank += e.amount;
+
+    let intervalDist = null;
+    let kmPerL = null;
+    let rsPerKm = null;
+    if (isFullTank(e)) {
+      if (lastFullTank && e.odo != null && lastFullTank.odo != null && e.odo > lastFullTank.odo && litresSinceFullTank > 0) {
+        intervalDist = fmt2(e.odo - lastFullTank.odo);
+        kmPerL = fmt2(intervalDist / litresSinceFullTank);
+        rsPerKm = fmt2(spendSinceFullTank / intervalDist);
+      }
+      lastFullTank = e;
+      litresSinceFullTank = 0;
+      spendSinceFullTank = 0;
+    }
+
+    return { ...e, dist, volume: fmt2(volume), rsPerKm, kmPerL, intervalDist, fullTank: isFullTank(e) };
   });
 }
 
@@ -68,6 +91,7 @@ const inputDate    = document.getElementById('inputDate');
 const inputPrice   = document.getElementById('inputPrice');
 const inputOdo     = document.getElementById('inputOdo');
 const inputAmount  = document.getElementById('inputAmount');
+const inputFullTank = document.getElementById('inputFullTank');
 const addForm      = document.getElementById('addForm');
 const clearBtn     = document.getElementById('clearBtn');
 const clearAllBtn  = document.getElementById('clearAllBtn');
@@ -118,19 +142,20 @@ if (todayLabelEl) todayLabelEl.textContent = todayLabel();
 // ── Live Preview ──────────────────────────────────────────────
 
 function updatePreview() {
-  const price  = parseFloat(inputPrice.value);
-  const odo    = parseFloat(inputOdo.value);
+  const price = parseFloat(inputPrice.value);
+  const odo = parseFloat(inputOdo.value);
   const amount = parseFloat(inputAmount.value);
-
-  // Find the last odo reading chronologically before this entry's date
   const currentDate = inputDate.value || todayISO();
-  const sorted = [...entries]
-    .filter(e => e.date <= currentDate && e.odo != null)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const lastEntry = sorted[sorted.length - 1] || null;
-  const lastOdo   = lastEntry ? lastEntry.odo : null;
 
-  // Distance (auto-calculated from odo diff)
+  const chronological = entries
+    .map((entry, index) => ({ ...entry, _index: index }))
+    .filter(entry => entry.date <= currentDate)
+    .sort((a, b) => a.date.localeCompare(b.date) || a._index - b._index);
+  const withOdo = chronological.filter(entry => entry.odo != null);
+  const lastEntry = withOdo[withOdo.length - 1] || null;
+  const lastOdo = lastEntry ? lastEntry.odo : null;
+  const lastFullTank = [...chronological].reverse().find(entry => entry.odo != null && isFullTank(entry)) || null;
+
   let dist = null;
   if (!isNaN(odo) && odo > 0 && lastOdo !== null && odo > lastOdo) {
     dist = odo - lastOdo;
@@ -147,36 +172,44 @@ function updatePreview() {
     prevDist.classList.remove('live');
   }
 
-  // Volume
-  if (!isNaN(price) && price > 0 && !isNaN(amount) && amount > 0) {
-    prevVolume.textContent = disp(amount / price, 'L');
-    prevVolume.classList.add('live');
-  } else {
-    prevVolume.textContent = '—';
-    prevVolume.classList.remove('live');
+  const validFuel = !isNaN(price) && price > 0 && !isNaN(amount) && amount > 0;
+  const volume = validFuel ? amount / price : 0;
+  prevVolume.textContent = validFuel ? disp(volume, 'L') : '—';
+  prevVolume.classList.toggle('live', validFuel);
+
+  const fullTankSelected = inputFullTank.checked;
+  const intervalDistance = fullTankSelected && lastFullTank && !isNaN(odo) && odo > lastFullTank.odo
+    ? odo - lastFullTank.odo : null;
+  let previousVolume = 0;
+  let afterLastFullTank = !lastFullTank;
+  chronological.forEach(entry => {
+    if (lastFullTank && entry._index === lastFullTank._index) {
+      afterLastFullTank = true;
+      return;
+    }
+    if (afterLastFullTank) previousVolume += entry.amount / entry.price;
+  });
+  const totalIntervalVolume = previousVolume + volume;
+
+  if (fullTankSelected && intervalDistance !== null) {
+    prevDist.textContent = intervalDistance.toFixed(2) + ' km';
+    prevDist.classList.add('live');
   }
 
-  // Rs/km
-  if (dist !== null && dist > 0 && !isNaN(amount) && amount > 0) {
-    prevRsKm.textContent = '₹' + disp(amount / dist) + '/km';
-    prevRsKm.classList.add('live');
-  } else {
-    prevRsKm.textContent = '—';
-    prevRsKm.classList.remove('live');
-  }
+  const rsPerKm = dist !== null && validFuel ? amount / dist : null;
+  prevRsKm.textContent = rsPerKm !== null ? '₹' + disp(rsPerKm) + '/km' : '—';
+  prevRsKm.classList.toggle('live', rsPerKm !== null);
 
-  // Km/L
-  if (dist !== null && dist > 0 && !isNaN(price) && price > 0 && !isNaN(amount) && amount > 0) {
-    const vol = amount / price;
-    prevKmL.textContent = disp(dist / vol, 'km/L');
+  if (fullTankSelected && intervalDistance !== null && intervalDistance > 0 && totalIntervalVolume > 0) {
+    prevKmL.textContent = disp(intervalDistance / totalIntervalVolume, 'km/L');
     prevKmL.classList.add('live');
   } else {
-    prevKmL.textContent = '—';
+    prevKmL.textContent = fullTankSelected ? 'Need prior full tank' : 'Full tank only';
     prevKmL.classList.remove('live');
   }
 }
-
 [inputPrice, inputOdo, inputAmount, inputDate].forEach(el => el.addEventListener('input', updatePreview));
+inputFullTank.addEventListener('change', updatePreview);
 
 // ── Add Entry ─────────────────────────────────────────────────
 
@@ -203,7 +236,7 @@ addForm.addEventListener('submit', e => {
   }
 
   // Store only raw fields; derived values calculated at render time
-  entries.push({ date, price, odo, amount });
+  entries.push({ date, price, odo, amount, fullTank: inputFullTank.checked });
   save(entries);
   renderAll();
   resetForm();
@@ -220,6 +253,7 @@ clearAllBtn.addEventListener('click', () => {
 
 function resetForm() {
   inputPrice.value = inputOdo.value = inputAmount.value = '';
+  inputFullTank.checked = false;
   inputDate.value = todayISO();
   updatePreview();
 }
@@ -247,7 +281,8 @@ function saveEdit(origIdx, card) {
   if (isNaN(amount) || amount <= 0) { toast('Invalid amount', 'error');       return; }
 
   // Store only raw fields; derived values re-computed at render
-  entries[origIdx] = { date, price, odo, amount };
+  const fullTank = card.querySelector('.ei-full-tank').checked;
+  entries[origIdx] = { date, price, odo, amount, fullTank };
   save(entries);
   renderAll();
   toast('Entry updated', 'success');
@@ -333,6 +368,8 @@ function renderLog() {
           <div class="lc-price">
             ₹${entry.price.toFixed(2)}/L
             ${entry.odo != null ? `&nbsp;·&nbsp; Odo ${entry.odo.toLocaleString('en-IN')} km` : ''}
+          
+            ${entry.fullTank ? '&nbsp;·&nbsp; Full tank' : '&nbsp;·&nbsp; Partial'}
           </div>
         </div>
         <div class="lc-pills">
@@ -356,8 +393,12 @@ function renderLog() {
             <div class="lc-detail-val val-blue">${entry.odo != null ? entry.odo.toLocaleString('en-IN') + ' km' : '—'}</div>
           </div>
           <div class="lc-detail-item">
+            <div class="lc-detail-label">Full tank</div>
+            <div class="lc-detail-val ${entry.fullTank ? 'val-green' : 'val-na'}">${entry.fullTank ? 'Yes' : 'No — partial refill'}</div>
+          </div>
+          <div class="lc-detail-item">
             <div class="lc-detail-label">Distance</div>
-            <div class="lc-detail-val ${hasDist ? '' : 'val-na'}">${hasDist ? entry.dist.toFixed(2) + ' km' : 'First entry'}</div>
+            <div class="lc-detail-val ${entry.intervalDist !== null ? '' : 'val-na'}">${entry.intervalDist !== null ? entry.intervalDist.toFixed(2) + ' km' : (hasDist ? entry.dist.toFixed(2) + ' km since last entry' : '—')}</div>
           </div>
           <div class="lc-detail-item">
             <div class="lc-detail-label">Volume Filled</div>
@@ -395,6 +436,13 @@ function renderLog() {
             <div class="edit-field">
               <label class="edit-label">Amount Paid (₹)</label>
               <input class="edit-input ei-amount" type="number" step="0.01" value="${entry.amount}" inputmode="decimal" />
+            </div>
+            <div class="edit-field edit-checkbox-field">
+              <label class="edit-label" for="ei-full-tank-${entry.origIdx}">Full tank</label>
+              <label class="checkbox-wrap" for="ei-full-tank-${entry.origIdx}">
+                <input class="ei-full-tank" id="ei-full-tank-${entry.origIdx}" type="checkbox" ${entry.fullTank ? 'checked' : ''} />
+                <span class="checkbox-text">Filled completely</span>
+              </label>
             </div>
           </div>
           <p class="edit-note">Distance &amp; mileage will be recalculated automatically.</p>

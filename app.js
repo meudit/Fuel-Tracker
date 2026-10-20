@@ -92,6 +92,7 @@ const inputPrice   = document.getElementById('inputPrice');
 const inputOdo     = document.getElementById('inputOdo');
 const inputAmount  = document.getElementById('inputAmount');
 const inputFullTank = document.getElementById('inputFullTank');
+const themeToggle = document.getElementById('themeToggle');
 const addForm      = document.getElementById('addForm');
 const clearBtn     = document.getElementById('clearBtn');
 const clearAllBtn  = document.getElementById('clearAllBtn');
@@ -138,6 +139,23 @@ document.querySelectorAll('.nav-item').forEach(btn => {
 
 inputDate.value = todayISO();
 if (todayLabelEl) todayLabelEl.textContent = todayLabel();
+
+// Remember the user's preferred appearance.
+const THEME_KEY = 'fueltrack_theme';
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  if (themeToggle) {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    themeToggle.setAttribute('aria-label', 'Switch to ' + nextTheme + ' theme');
+    themeToggle.setAttribute('title', 'Switch to ' + nextTheme + ' theme');
+  }
+}
+applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+if (themeToggle) themeToggle.addEventListener('click', () => {
+  const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem(THEME_KEY, nextTheme);
+  applyTheme(nextTheme);
+});
 
 // ── Live Preview ──────────────────────────────────────────────
 
@@ -365,13 +383,14 @@ function renderLog() {
     card.innerHTML = `
       <div class="lc-head">
         <div class="lc-num">${entryNum}</div>
+        <span class="tank-marker ${entry.fullTank ? 'tank-full' : 'tank-partial'}" title="${entry.fullTank ? 'Full tank' : 'Partial refill'}" aria-label="${entry.fullTank ? 'Full tank' : 'Partial refill'}">${entry.fullTank ? 'F' : 'P'}</span>
         <div class="lc-meta">
           <div class="lc-date">${fmtDate(entry.date)}</div>
           <div class="lc-price">
             ₹${entry.price.toFixed(2)}/L
             ${entry.odo != null ? `&nbsp;·&nbsp; Odo ${entry.odo.toLocaleString('en-IN')} km` : ''}
           
-            ${entry.fullTank ? '&nbsp;·&nbsp; Full tank' : '&nbsp;·&nbsp; Partial'}
+
           </div>
         </div>
         <div class="lc-pills">

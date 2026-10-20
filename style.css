@@ -220,6 +220,18 @@ html, body {
   margin: 0 18px;
 }
 
+.full-tank-row { min-height: 62px; }
+.checkbox-wrap {
+  display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px;
+  color: var(--text-2); font-size: 0.8rem; font-weight: 500; cursor: pointer;
+}
+.checkbox-wrap input {
+  width: 20px; height: 20px; accent-color: var(--blue); cursor: pointer;
+  flex-shrink: 0;
+}
+.checkbox-text { white-space: nowrap; }
+.edit-checkbox-field { justify-content: center; }
+
 /* ── Live Preview ───────────────────────────────────────── */
 .live-preview-label {
   display: flex; align-items: center; gap: 6px;

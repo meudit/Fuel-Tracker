@@ -383,23 +383,24 @@ function renderLog() {
     card.innerHTML = `
       <div class="lc-head">
         <div class="lc-num">${entryNum}</div>
-        <span class="tank-marker ${entry.fullTank ? 'tank-full' : 'tank-partial'}" title="${entry.fullTank ? 'Full tank' : 'Partial refill'}" aria-label="${entry.fullTank ? 'Full tank' : 'Partial refill'}">${entry.fullTank ? 'F' : 'P'}</span>
         <div class="lc-meta">
-          <div class="lc-date">${fmtDate(entry.date)}</div>
-          <div class="lc-price">
-            ₹${entry.price.toFixed(2)}/L
-            ${entry.odo != null ? `&nbsp;·&nbsp; Odo ${entry.odo.toLocaleString('en-IN')} km` : ''}
-          
-
+          <div class="lc-topline">
+            <span class="lc-date">${fmtDate(entry.date)}</span>
+            <span class="tank-marker ${entry.fullTank ? 'tank-full' : 'tank-partial'}" title="${entry.fullTank ? 'Full tank' : 'Partial refill'}" aria-label="${entry.fullTank ? 'Full tank' : 'Partial refill'}">${entry.fullTank ? 'F' : 'P'}</span>
+            <div class="lc-pills">
+              ${hasKmL
+                ? `<span class="lc-pill pill-green">${entry.kmPerL.toFixed(2)} km/L</span>`
+                : `<span class="lc-pill pill-na">No dist</span>`}
+              ${hasRsKm
+                ? `<span class="lc-pill pill-orange">₹${entry.rsPerKm.toFixed(2)}/km</span>`
+                : ''}
+            </div>
           </div>
-        </div>
-        <div class="lc-pills">
-          ${hasKmL
-            ? `<span class="lc-pill pill-green">${entry.kmPerL.toFixed(2)} km/L</span>`
-            : `<span class="lc-pill pill-na">No dist</span>`}
-          ${hasRsKm
-            ? `<span class="lc-pill pill-orange">₹${entry.rsPerKm.toFixed(2)}/km</span>`
-            : ''}
+          <div class="lc-price">
+            <span>₹${entry.price.toFixed(2)}/L</span>
+            <span class="lc-meta-sep">·</span>
+            <span class="lc-odo">${entry.odo != null ? 'Odo ' + entry.odo.toLocaleString('en-IN') + ' km' : 'Odo —'}</span>
+          </div>
         </div>
         <svg class="lc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="9 18 15 12 9 6"/>

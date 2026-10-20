@@ -733,3 +733,44 @@ html[data-theme="light"] .toast { background: rgba(255,255,255,.96); box-shadow:
   .lc-head { padding: 13px 12px; gap: 7px; }
   .tank-marker { width: 26px; height: 26px; flex-basis: 26px; }
 }
+
+
+/* Refined log row: stable two-line hierarchy at narrow widths. */
+.lc-head { gap: 8px; padding: 13px 12px; }
+.lc-num { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 8px; }
+.lc-meta { min-width: 0; flex: 1 1 auto; }
+.lc-topline {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.lc-date {
+  flex: 0 1 auto; min-width: 0; white-space: nowrap;
+  font-size: .88rem; line-height: 1.2; letter-spacing: -.2px;
+}
+.lc-topline .tank-marker {
+  width: 23px; height: 23px; flex: 0 0 23px; font-size: .68rem;
+}
+.lc-pills {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 4px; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap;
+}
+.lc-pill { padding: 4px 6px; font-size: .66rem; line-height: 1; }
+.lc-price {
+  display: flex; align-items: center; gap: 5px;
+  min-width: 0; margin-top: 4px; white-space: nowrap;
+  font-size: .72rem; line-height: 1.2; color: var(--text-2);
+}
+.lc-meta-sep { color: var(--text-3); }
+.lc-odo { min-width: 0; }
+.lc-chevron { width: 16px; height: 16px; flex: 0 0 16px; }
+@media (max-width: 390px) {
+  .lc-head { gap: 7px; padding: 12px 10px; }
+  .lc-date { font-size: .82rem; }
+  .lc-pills { gap: 3px; }
+  .lc-pill { padding: 4px 5px; font-size: .61rem; }
+  .lc-topline { gap: 5px; }
+  .lc-price { font-size: .69rem; }
+}
+@media (max-width: 340px) {
+  .lc-topline { flex-wrap: wrap; }
+  .lc-pills { flex: 1 0 100%; justify-content: flex-start; padding-left: 0; }
+}

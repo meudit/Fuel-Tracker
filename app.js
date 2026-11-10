@@ -313,9 +313,6 @@ clearAllBtn.addEventListener('click', () => {
   if (confirm('Clear all fuel entries for this vehicle? This cannot be undone.')) {
     entries = entries.filter(entry => entry.vehicleId !== selectedVehicleId);
     deletedEntryIds.push(...currentIds);
-    if (cloudClient && cloudSession && currentIds.length) cloudClient.from('fuel_entries').delete().in('id', currentIds).then(({ error }) => {
-      if (error) console.error('Cloud delete failed:', error);
-    });
     save(); renderAll(); toast('Vehicle entries cleared', 'error');
   }
 });
@@ -334,9 +331,6 @@ function deleteEntry(origIdx) {
   const deletedId = entries[origIdx]?.id;
   if (deletedId) deletedEntryIds.push(deletedId);
   entries.splice(origIdx, 1);
-  if (cloudClient && cloudSession && deletedId) cloudClient.from('fuel_entries').delete().eq('id', deletedId).then(({ error }) => {
-    if (error) console.error('Cloud delete failed:', error);
-  });
   save();
   renderAll();
   toast('Entry deleted', 'error');
@@ -772,14 +766,6 @@ function deleteVehicle(id) {
   const removedEntryIds = entries.filter(entry => entry.vehicleId === id).map(entry => entry.id);
   deletedVehicleIds.push(id);
   deletedEntryIds.push(...removedEntryIds);
-  if (cloudClient && cloudSession) {
-    cloudClient.from('vehicles').delete().eq('id', id).then(({ error }) => {
-      if (error) console.error('Cloud vehicle delete failed:', error);
-    });
-    if (removedEntryIds.length) cloudClient.from('fuel_entries').delete().in('id', removedEntryIds).then(({ error }) => {
-      if (error) console.error('Cloud entry delete failed:', error);
-    });
-  }
   vehicles = vehicles.filter(item => item.id !== id);
   entries = entries.filter(entry => entry.vehicleId !== id);
   if (selectedVehicleId === id) selectedVehicleId = vehicles[0].id;

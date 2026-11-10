@@ -4,40 +4,61 @@
    from consecutive entries sorted by date.
    ============================================================ */
 
-const STORAGE_KEY = 'fueltrack_entries';
+const DATA_KEY = 'fueltrack_data_v2';
+const LEGACY_STORAGE_KEY = 'fueltrack_entries';
+const THEME_KEY = 'fueltrack_theme';
 
-// ── Helpers ──────────────────────────────────────────────────
-
-function fmt2(val) {
-  if (val === null || val === undefined || isNaN(val)) return null;
-  return parseFloat(val.toFixed(2));
-}
-function disp(val, suffix = '') {
-  if (val === null || val === undefined || isNaN(val)) return '—';
-  return val.toFixed(2) + (suffix ? ' ' + suffix : '');
-}
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function fmtDate(iso) {
-  if (!iso) return '—';
-  const [y, m, d] = iso.split('-');
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${parseInt(d)} ${months[parseInt(m)-1]} '${y.slice(2)}`;
-}
-function todayLabel() {
-  return new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long' });
+function makeId() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
 }
 
-// ── Storage ──────────────────────────────────────────────────
+function loadAppState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DATA_KEY));
+    if (saved && Array.isArray(saved.vehicles) && Array.isArray(saved.entries)) {
+      const safeVehicles = saved.vehicles.map(v => ({ ...v, photos: Array.isArray(v.photos) ? v.photos : [] }));
+      const safeEntries = saved.entries.map(e => ({
+        ...e, id: e.id || makeId(), vehicleId: e.vehicleId || safeVehicles[0]?.id
+      }));
+      if (safeVehicles.length) {
+        return { vehicles: safeVehicles, entries: safeEntries,
+          selectedVehicleId: safeVehicles.some(v => v.id === saved.selectedVehicleId)
+            ? saved.selectedVehicleId : safeVehicles[0].id };
+      }
+    }
+  } catch (error) { console.warn('Could not read FuelTrack data; starting fresh.', error); }
 
-function load()  { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
-function save(e) { localStorage.setItem(STORAGE_KEY, JSON.stringify(e)); }
+  let legacyEntries = [];
+  try { legacyEntries = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY)) || []; } catch {}
+  const starterId = makeId();
+  return {
+    vehicles: [{ id: starterId, name: 'My Vehicle', brand: '', model: '',
+      registrationNumber: '', type: 'Car', photos: [], isStarter: true }],
+    entries: legacyEntries.map(entry => ({ ...entry, id: makeId(), vehicleId: starterId })),
+    selectedVehicleId: starterId
+  };
+}
 
-// ── State ─────────────────────────────────────────────────────
+const initialState = loadAppState();
+let vehicles = initialState.vehicles;
+let entries = initialState.entries;
+let selectedVehicleId = initialState.selectedVehicleId;
+let deletedVehicleIds = Array.isArray(initialState.deletedVehicleIds) ? initialState.deletedVehicleIds : [];
+let deletedEntryIds = Array.isArray(initialState.deletedEntryIds) ? initialState.deletedEntryIds : [];
 
-let entries = load();
+function getCurrentEntries() {
+  return entries.filter(entry => entry.vehicleId === selectedVehicleId);
+}
+
+function save() {
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds, deletedEntryIds }));
+  syncRemoteIfReady();
+}
 
 // ── Derived calculations ──────────────────────────────────────
 // Entries are stored in insertion order but may have any dates.
@@ -52,6 +73,7 @@ function isFullTank(entry) {
 function getEnrichedEntries() {
   const sorted = entries
     .map((e, i) => ({ ...e, origIdx: i }))
+    .filter(e => e.vehicleId === selectedVehicleId)
     .sort((a, b) => a.date.localeCompare(b.date) || a.origIdx - b.origIdx);
 
   let lastFullTank = null;
@@ -93,6 +115,28 @@ const inputOdo     = document.getElementById('inputOdo');
 const inputAmount  = document.getElementById('inputAmount');
 const inputFullTank = document.getElementById('inputFullTank');
 const themeToggle = document.getElementById('themeToggle');
+const vehicleSelects = document.querySelectorAll('.vehicle-select');
+const vehicleListEl = document.getElementById('vehicleList');
+const vehicleFormEl = document.getElementById('vehicleForm');
+const vehicleNameInput = document.getElementById('vehicleName');
+const vehicleBrandInput = document.getElementById('vehicleBrand');
+const vehicleModelInput = document.getElementById('vehicleModel');
+const vehicleRegInput = document.getElementById('vehicleReg');
+const vehicleTypeInput = document.getElementById('vehicleType');
+const vehiclePhotoInput = document.getElementById('vehiclePhotoInput');
+const vehiclePhotoPreviews = document.getElementById('vehiclePhotoPreviews');
+const overviewTotalsEl = document.getElementById('overviewTotals');
+const overviewVehiclesEl = document.getElementById('overviewVehicles');
+const authStatusEl = document.getElementById('authStatus');
+const authSetupHintEl = document.getElementById('authSetupHint');
+const authControlsEl = document.getElementById('authControls');
+const authEmailInput = document.getElementById('authEmail');
+const authPasswordInput = document.getElementById('authPassword');
+const signInBtn = document.getElementById('signInBtn');
+const signUpBtn = document.getElementById('signUpBtn');
+const signOutBtn = document.getElementById('signOutBtn');
+let editingVehicleId = null;
+let pendingVehiclePhotos = [];
 const addForm      = document.getElementById('addForm');
 const clearBtn     = document.getElementById('clearBtn');
 const clearAllBtn  = document.getElementById('clearAllBtn');
@@ -141,7 +185,6 @@ inputDate.value = todayISO();
 if (todayLabelEl) todayLabelEl.textContent = todayLabel();
 
 // Remember the user's preferred appearance.
-const THEME_KEY = 'fueltrack_theme';
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (themeToggle) {
@@ -167,7 +210,7 @@ function updatePreview() {
 
   const chronological = entries
     .map((entry, index) => ({ ...entry, _index: index }))
-    .filter(entry => entry.date <= currentDate)
+    .filter(entry => entry.vehicleId === selectedVehicleId && entry.date <= currentDate)
     .sort((a, b) => a.date.localeCompare(b.date) || a._index - b._index);
   const withOdo = chronological.filter(entry => entry.odo != null);
   const lastEntry = withOdo[withOdo.length - 1] || null;
@@ -247,7 +290,7 @@ addForm.addEventListener('submit', e => {
 
   // Warn if odo looks wrong (lower than last)
   const sorted = [...entries]
-    .filter(e => e.date <= date && e.odo != null)
+    .filter(e => e.vehicleId === selectedVehicleId && e.date <= date && e.odo != null)
     .sort((a, b) => a.date.localeCompare(b.date));
   const lastOdo = sorted.length ? sorted[sorted.length - 1].odo : null;
   if (odo !== null && lastOdo !== null && odo <= lastOdo) {
@@ -256,8 +299,8 @@ addForm.addEventListener('submit', e => {
   }
 
   // Store only raw fields; derived values calculated at render time
-  entries.push({ date, price, odo, amount, fullTank: inputFullTank.checked });
-  save(entries);
+  entries.push({ id: makeId(), vehicleId: selectedVehicleId, date, price, odo, amount, fullTank: inputFullTank.checked });
+  save();
   renderAll();
   resetForm();
   toast('Entry added', 'success');
@@ -265,9 +308,12 @@ addForm.addEventListener('submit', e => {
 
 clearBtn.addEventListener('click', resetForm);
 clearAllBtn.addEventListener('click', () => {
-  if (!entries.length) return;
-  if (confirm('Clear all fuel entries? This cannot be undone.')) {
-    entries = []; save(entries); renderAll(); toast('All entries cleared', 'error');
+  const currentIds = getCurrentEntries().map(entry => entry.id);
+  if (!currentIds.length) return;
+  if (confirm('Clear all fuel entries for this vehicle? This cannot be undone.')) {
+    entries = entries.filter(entry => entry.vehicleId !== selectedVehicleId);
+    deletedEntryIds.push(...currentIds);
+    save(); renderAll(); toast('Vehicle entries cleared', 'error');
   }
 });
 
@@ -282,8 +328,10 @@ function resetForm() {
 
 function deleteEntry(origIdx) {
   if (!confirm('Delete this entry?')) return;
+  const deletedId = entries[origIdx]?.id;
+  if (deletedId) deletedEntryIds.push(deletedId);
   entries.splice(origIdx, 1);
-  save(entries);
+  save();
   renderAll();
   toast('Entry deleted', 'error');
 }
@@ -302,8 +350,8 @@ function saveEdit(origIdx, card) {
 
   // Store only raw fields; derived values re-computed at render
   const fullTank = card.querySelector('.ei-full-tank').checked;
-  entries[origIdx] = { date, price, odo, amount, fullTank };
-  save(entries);
+  entries[origIdx] = { ...entries[origIdx], date, price, odo, amount, fullTank };
+  save();
   renderAll();
   toast('Entry updated', 'success');
 }
@@ -311,21 +359,26 @@ function saveEdit(origIdx, card) {
 // ── Render ────────────────────────────────────────────────────
 
 function renderAll() {
+  renderVehicleSelectors();
   renderHeader();
   renderInsights();
   renderLog();
+  renderVehicles();
+  renderOverview();
 }
 
 function renderHeader() {
-  totalEntriesVal.textContent = entries.length;
-  const total = entries.reduce((s, e) => s + (e.amount || 0), 0);
+  const currentEntries = getCurrentEntries();
+  totalEntriesVal.textContent = currentEntries.length;
+  const total = currentEntries.reduce((s, e) => s + (e.amount || 0), 0);
   totalSpendVal.textContent = '₹' + total.toLocaleString('en-IN', {
     minimumFractionDigits: 0, maximumFractionDigits: 0
   });
 }
 
 function renderInsights() {
-  if (!entries.length) {
+  const currentEntries = getCurrentEntries();
+  if (!currentEntries.length) {
     insightsEmpty.classList.remove('hidden');
     insightsContent.classList.add('hidden');
     return;
@@ -359,7 +412,7 @@ function renderInsights() {
 }
 
 function renderLog() {
-  if (!entries.length) {
+  if (!getCurrentEntries().length) {
     logEmpty.classList.remove('hidden');
     logContent.classList.add('hidden');
     return;
@@ -520,6 +573,379 @@ function renderLog() {
     logCards.appendChild(card);
   });
 }
+
+
+/* ── Multi-vehicle management ────────────────────────────────── */
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function renderVehicleSelectors() {
+  document.querySelectorAll('.vehicle-select').forEach(select => {
+    select.innerHTML = vehicles.map(vehicle =>
+      '<option value="' + escapeHtml(vehicle.id) + '"' +
+      (vehicle.id === selectedVehicleId ? ' selected' : '') + '>' +
+      escapeHtml(vehicle.name) + '</option>'
+    ).join('');
+    select.disabled = vehicles.length <= 1;
+  });
+}
+
+function photoSource(photo) {
+  return photo ? (photo.url || photo.dataUrl || '') : '';
+}
+
+function renderVehicles() {
+  if (!vehicleListEl) return;
+  if (!vehicles.length) {
+    vehicleListEl.innerHTML = '<div class="empty-state"><p class="empty-title">No vehicles yet</p><p class="empty-sub">Add a vehicle to start tracking fuel.</p></div>';
+    return;
+  }
+
+  vehicleListEl.innerHTML = vehicles.map(vehicle => {
+    const current = entries.filter(entry => entry.vehicleId === vehicle.id);
+    const spent = current.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const firstPhoto = photoSource((vehicle.photos || [])[0]);
+    const cover = firstPhoto
+      ? '<img class="vehicle-cover" src="' + escapeHtml(firstPhoto) + '" alt="' + escapeHtml(vehicle.name) + '">'
+      : '<div class="vehicle-cover vehicle-placeholder">' + (vehicle.type === 'Bike' ? '🏍️' : vehicle.type === 'Scooter' ? '🛵' : '🚘') + '</div>';
+    const gallery = (vehicle.photos || []).slice(1).map(photo => {
+      const src = photoSource(photo);
+      return src ? '<img class="vehicle-thumb" src="' + escapeHtml(src) + '" alt="Vehicle photo">' : '';
+    }).join('');
+    return '<article class="vehicle-card">' +
+      '<div class="vehicle-card-media">' + cover + '</div>' +
+      '<div class="vehicle-card-content">' +
+      '<div class="vehicle-card-title-row"><div><div class="vehicle-card-title">' + escapeHtml(vehicle.name) + '</div>' +
+      '<div class="vehicle-card-sub">' + escapeHtml([vehicle.brand, vehicle.model].filter(Boolean).join(' ')) + '</div></div>' +
+      '<span class="vehicle-type-pill">' + escapeHtml(vehicle.type || 'Other') + '</span></div>' +
+      '<div class="vehicle-meta">' + escapeHtml(vehicle.registrationNumber || 'No registration number') + '</div>' +
+      '<div class="vehicle-metrics"><div><strong>' + current.length + '</strong><span>Fills</span></div>' +
+      '<div><strong>₹' + spent.toLocaleString('en-IN', { maximumFractionDigits: 0 }) + '</strong><span>Total spent</span></div></div>' +
+      (gallery ? '<div class="vehicle-gallery">' + gallery + '</div>' : '') +
+      '<div class="vehicle-card-actions">' +
+      '<button class="lc-btn lc-btn-edit" data-vehicle-select="' + escapeHtml(vehicle.id) + '" type="button">Use vehicle</button>' +
+      '<button class="lc-btn lc-btn-edit" data-vehicle-edit="' + escapeHtml(vehicle.id) + '" type="button">Edit</button>' +
+      '<button class="lc-btn lc-btn-del" data-vehicle-delete="' + escapeHtml(vehicle.id) + '" type="button">Delete</button>' +
+      '</div></div></article>';
+  }).join('');
+
+  vehicleListEl.querySelectorAll('[data-vehicle-select]').forEach(button => {
+    button.addEventListener('click', () => selectVehicle(button.dataset.vehicleSelect));
+  });
+  vehicleListEl.querySelectorAll('[data-vehicle-edit]').forEach(button => {
+    button.addEventListener('click', () => openVehicleForm(button.dataset.vehicleEdit));
+  });
+  vehicleListEl.querySelectorAll('[data-vehicle-delete]').forEach(button => {
+    button.addEventListener('click', () => deleteVehicle(button.dataset.vehicleDelete));
+  });
+}
+
+function renderOverview() {
+  if (!overviewTotalsEl || !overviewVehiclesEl) return;
+  const totalSpent = entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  overviewTotalsEl.innerHTML =
+    '<div class="stat-row"><span class="stat-name">Vehicles</span><strong class="stat-val">' + vehicles.length + '</strong></div>' +
+    '<div class="row-sep"></div><div class="stat-row"><span class="stat-name">Total fuel fills</span><strong class="stat-val">' + entries.length + '</strong></div>' +
+    '<div class="row-sep"></div><div class="stat-row"><span class="stat-name">Combined fuel spend</span><strong class="stat-val stat-big">₹' + totalSpent.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</strong></div>';
+
+  overviewVehiclesEl.innerHTML = vehicles.map(vehicle => {
+    const fuelEntries = entries.filter(entry => entry.vehicleId === vehicle.id);
+    const spend = fuelEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const photo = photoSource((vehicle.photos || [])[0]);
+    const image = photo ? '<img class="overview-thumb" src="' + escapeHtml(photo) + '" alt="">' : '<div class="overview-thumb vehicle-placeholder">🚘</div>';
+    return '<button class="overview-vehicle" type="button" data-overview-vehicle="' + escapeHtml(vehicle.id) + '">' +
+      image + '<span class="overview-vehicle-info"><strong>' + escapeHtml(vehicle.name) + '</strong><small>' + fuelEntries.length + ' fills</small></span>' +
+      '<strong class="overview-spend">₹' + spend.toLocaleString('en-IN', { maximumFractionDigits: 0 }) + '</strong></button>';
+  }).join('');
+  overviewVehiclesEl.querySelectorAll('[data-overview-vehicle]').forEach(button => {
+    button.addEventListener('click', () => {
+      selectVehicle(button.dataset.overviewVehicle);
+      document.querySelector('[data-tab="tab-insights"]').click();
+    });
+  });
+}
+
+function selectVehicle(id) {
+  if (!vehicles.some(vehicle => vehicle.id === id)) return;
+  selectedVehicleId = id;
+  save();
+  renderAll();
+  updatePreview();
+}
+
+function resetVehicleForm() {
+  editingVehicleId = null;
+  pendingVehiclePhotos = [];
+  if (vehicleNameInput) vehicleNameInput.value = '';
+  if (vehicleBrandInput) vehicleBrandInput.value = '';
+  if (vehicleModelInput) vehicleModelInput.value = '';
+  if (vehicleRegInput) vehicleRegInput.value = '';
+  if (vehicleTypeInput) vehicleTypeInput.value = 'Car';
+  if (vehiclePhotoInput) vehiclePhotoInput.value = '';
+  if (vehiclePhotoPreviews) vehiclePhotoPreviews.innerHTML = '';
+  if (vehicleFormEl) vehicleFormEl.classList.add('hidden');
+}
+
+function openVehicleForm(id) {
+  resetVehicleForm();
+  const vehicle = id ? vehicles.find(item => item.id === id) : null;
+  editingVehicleId = vehicle ? vehicle.id : null;
+  if (vehicle) {
+    vehicleNameInput.value = vehicle.name || '';
+    vehicleBrandInput.value = vehicle.brand || '';
+    vehicleModelInput.value = vehicle.model || '';
+    vehicleRegInput.value = vehicle.registrationNumber || '';
+    vehicleTypeInput.value = vehicle.type || 'Other';
+    (vehicle.photos || []).forEach(photo => {
+      const src = photoSource(photo);
+      if (src) vehiclePhotoPreviews.insertAdjacentHTML('beforeend', '<img class="vehicle-thumb" src="' + escapeHtml(src) + '" alt="Existing vehicle photo">');
+    });
+  }
+  vehicleFormEl.classList.remove('hidden');
+  vehicleFormEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressVehiclePhoto(file) {
+  const dataUrl = await readAsDataUrl(file);
+  const image = new Image();
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error('Unsupported image file.'));
+    image.src = dataUrl;
+  });
+  const maxSide = 1400;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext('2d');
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.78);
+}
+
+async function saveVehicle() {
+  const name = vehicleNameInput.value.trim();
+  if (!name) { toast('Enter a vehicle name', 'error'); return; }
+  const existing = editingVehicleId ? vehicles.find(vehicle => vehicle.id === editingVehicleId) : null;
+  const vehicle = existing || { id: makeId(), photos: [] };
+  vehicle.name = name;
+  vehicle.brand = vehicleBrandInput.value.trim();
+  vehicle.model = vehicleModelInput.value.trim();
+  vehicle.registrationNumber = vehicleRegInput.value.trim();
+  vehicle.type = vehicleTypeInput.value;
+  vehicle.isStarter = false;
+  vehicle.photos = vehicle.photos || [];
+  pendingVehiclePhotos.forEach(dataUrl => vehicle.photos.push({ id: makeId(), dataUrl }));
+  if (!existing) vehicles.push(vehicle);
+  selectedVehicleId = vehicle.id;
+  save();
+  resetVehicleForm();
+  renderAll();
+  updatePreview();
+  toast(existing ? 'Vehicle updated' : 'Vehicle added', 'success');
+}
+
+function deleteVehicle(id) {
+  const vehicle = vehicles.find(item => item.id === id);
+  if (!vehicle) return;
+  if (vehicles.length === 1) { toast('Add another vehicle before deleting this one', 'error'); return; }
+  if (!confirm('Delete ' + vehicle.name + ' and all its fuel entries? This cannot be undone.')) return;
+  const removedEntryIds = entries.filter(entry => entry.vehicleId === id).map(entry => entry.id);
+  deletedVehicleIds.push(id);
+  deletedEntryIds.push(...removedEntryIds);
+  vehicles = vehicles.filter(item => item.id !== id);
+  entries = entries.filter(entry => entry.vehicleId !== id);
+  if (selectedVehicleId === id) selectedVehicleId = vehicles[0].id;
+  save();
+  renderAll();
+  updatePreview();
+  toast('Vehicle deleted', 'error');
+}
+
+if (document.getElementById('showVehicleForm')) {
+  document.getElementById('showVehicleForm').addEventListener('click', () => openVehicleForm(null));
+  document.getElementById('cancelVehicle').addEventListener('click', resetVehicleForm);
+  document.getElementById('saveVehicle').addEventListener('click', saveVehicle);
+}
+if (vehiclePhotoInput) {
+  vehiclePhotoInput.addEventListener('change', async () => {
+    const files = Array.from(vehiclePhotoInput.files || []).filter(file => file.type.startsWith('image/')).slice(0, 8);
+    try {
+      pendingVehiclePhotos = await Promise.all(files.map(compressVehiclePhoto));
+      vehiclePhotoPreviews.innerHTML = pendingVehiclePhotos.map(src => '<img class="vehicle-thumb" src="' + src + '" alt="New vehicle photo preview">').join('');
+      if (editingVehicleId) {
+        const current = vehicles.find(vehicle => vehicle.id === editingVehicleId);
+        (current?.photos || []).forEach(photo => {
+          const src = photoSource(photo);
+          if (src) vehiclePhotoPreviews.insertAdjacentHTML('afterbegin', '<img class="vehicle-thumb" src="' + escapeHtml(src) + '" alt="Existing vehicle photo">');
+        });
+      }
+    } catch (error) {
+      toast(error.message || 'Could not process photo', 'error');
+    }
+  });
+}
+document.querySelectorAll('.vehicle-select').forEach(select => {
+  select.addEventListener('change', () => selectVehicle(select.value));
+});
+
+/* ── Google Sheets + Apps Script sync (personal account) ───────
+   The web app is deployed as "user accessing the web app" and restricted
+   to the owner's Google account. Reads use JSONP; writes use a no-cors
+   POST, then the client verifies by reading the saved snapshot.
+*/
+const APPS_SCRIPT_URL = window.FUELTRACK_APPS_SCRIPT_URL || '';
+let cloudSyncInProgress = false;
+let cloudSyncPending = false;
+let cloudReady = false;
+
+function updateCloudStatus(message) {
+  if (!authStatusEl) return;
+  authStatusEl.textContent = message || (cloudReady
+    ? 'Google Sheets connected · private to your Google account'
+    : 'Local mode · configure your private Google Sheets connection');
+  if (authSetupHintEl) authSetupHintEl.classList.toggle('hidden', cloudReady);
+  if (authControlsEl) authControlsEl.classList.add('hidden');
+}
+
+function readGoogleSnapshot() {
+  return new Promise((resolve, reject) => {
+    if (!APPS_SCRIPT_URL) return reject(new Error('Add your Apps Script web app URL to apps-script-config.js.'));
+    const callbackName = 'fuelTrackRead_' + makeId().replace(/-/g, '');
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Google Sheets read timed out. Check that the web app is deployed for your Google account.'));
+    }, 20000);
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+    }
+    window[callbackName] = payload => {
+      cleanup();
+      if (!payload || payload.ok !== true) return reject(new Error(payload?.error || 'Could not read Google Sheets.'));
+      resolve(payload.data);
+    };
+    script.onerror = () => { cleanup(); reject(new Error('Could not reach the Apps Script web app.')); };
+    script.src = APPS_SCRIPT_URL + '?action=read&callback=' + encodeURIComponent(callbackName) + '&_=' + Date.now();
+    document.head.appendChild(script);
+  });
+}
+
+async function writeGoogleSnapshot() {
+  if (!APPS_SCRIPT_URL) return;
+  const snapshot = {
+    action: 'save',
+    vehicles: vehicles.map(vehicle => ({
+      ...vehicle,
+      photos: (vehicle.photos || []).map(photo => ({ ...photo }))
+    })),
+    entries,
+    selectedVehicleId
+  };
+  // Apps Script ContentService redirects responses; no-cors avoids a browser
+  // preflight. A subsequent authenticated JSONP read verifies persistence.
+  await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(snapshot)
+  });
+  await new Promise(resolve => setTimeout(resolve, 900));
+  const remote = await readGoogleSnapshot();
+  if (!remote || !Array.isArray(remote.vehicles) || !Array.isArray(remote.entries)) {
+    throw new Error('Google Sheets did not return a valid saved snapshot.');
+  }
+  vehicles = remote.vehicles;
+  entries = remote.entries;
+  if (!vehicles.some(vehicle => vehicle.id === selectedVehicleId)) selectedVehicleId = vehicles[0]?.id;
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds: [], deletedEntryIds: [] }));
+  renderAll();
+  updatePreview();
+}
+
+async function initialiseGoogleSync() {
+  if (!APPS_SCRIPT_URL) {
+    updateCloudStatus();
+    return;
+  }
+  updateCloudStatus('Connecting to your private Google Sheet…');
+  try {
+    const remote = await readGoogleSnapshot();
+    if (remote && Array.isArray(remote.vehicles) && Array.isArray(remote.entries)) {
+      const localHasData = entries.length > 0 || vehicles.some(v => !v.isStarter && v.name !== 'My Vehicle');
+      if (remote.vehicles.length && !localHasData) {
+        vehicles = remote.vehicles;
+        entries = remote.entries;
+        selectedVehicleId = vehicles.some(v => v.id === selectedVehicleId) ? selectedVehicleId : vehicles[0].id;
+      } else if (localHasData) {
+        const vMap = new Map(remote.vehicles.map(v => [v.id, v]));
+        vehicles.forEach(v => vMap.set(v.id, { ...vMap.get(v.id), ...v }));
+        const eMap = new Map(remote.entries.map(e => [e.id, e]));
+        entries.forEach(e => eMap.set(e.id, e));
+        vehicles = Array.from(vMap.values());
+        entries = Array.from(eMap.values());
+        if (!vehicles.some(v => v.id === selectedVehicleId)) selectedVehicleId = vehicles[0]?.id;
+      }
+      if (!vehicles.length) {
+        const id = makeId();
+        vehicles = [{ id, name: 'My Vehicle', type: 'Car', photos: [], isStarter: true }];
+        selectedVehicleId = id;
+      }
+      localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds: [], deletedEntryIds: [] }));
+      renderAll();
+      updatePreview();
+      cloudReady = true;
+      updateCloudStatus('Connected · Google Sheets and Drive are private to your Google account');
+      if (localHasData) await writeGoogleSnapshot();
+    }
+  } catch (error) {
+    console.error('FuelTrack Google sync:', error);
+    updateCloudStatus('Google sync unavailable · local data is safe in this browser');
+  }
+}
+
+async function syncRemoteIfReady() {
+  if (!APPS_SCRIPT_URL || !cloudReady) return;
+  if (cloudSyncInProgress) { cloudSyncPending = true; return; }
+  cloudSyncInProgress = true;
+  updateCloudStatus('Saving to Google Sheets…');
+  try {
+    await writeGoogleSnapshot();
+    cloudReady = true;
+    updateCloudStatus('All changes saved to your private Google Sheet');
+  } catch (error) {
+    console.error('FuelTrack Google sync failed:', error);
+    updateCloudStatus('Sync issue · local changes are saved; ' + (error.message || 'try again'));
+  } finally {
+    cloudSyncInProgress = false;
+    if (cloudSyncPending) {
+      cloudSyncPending = false;
+      syncRemoteIfReady();
+    }
+  }
+}
+
+if (signInBtn) signInBtn.addEventListener('click', () => toast('Google access is controlled by your Apps Script deployment.', 'success'));
+if (signUpBtn) signUpBtn.addEventListener('click', () => toast('This is a personal-only connection; no separate account is needed.', 'success'));
+if (signOutBtn) signOutBtn.classList.add('hidden');
+if (APPS_SCRIPT_URL) initialiseGoogleSync();
+else updateCloudStatus();
 
 // ── Toast ─────────────────────────────────────────────────────
 

@@ -63,6 +63,10 @@
           <h2 class="page-title">Log Fill-up</h2>
           <span class="page-date" id="todayLabel"></span>
         </div>
+        <div class="vehicle-switcher">
+          <span class="switcher-label">Vehicle</span>
+          <select class="vehicle-select edit-input" aria-label="Select active vehicle"></select>
+        </div>
 
         <form id="addForm" novalidate>
 
@@ -175,6 +179,10 @@
         <div class="page-title-row">
           <h2 class="page-title">Insights</h2>
         </div>
+        <div class="vehicle-switcher">
+          <span class="switcher-label">Vehicle</span>
+          <select class="vehicle-select edit-input" aria-label="Select active vehicle"></select>
+        </div>
 
         <div id="insightsEmpty" class="empty-state">
           <div class="empty-illo">
@@ -279,6 +287,10 @@
           <h2 class="page-title">Log</h2>
           <button class="btn-text-red" id="clearAllBtn">Clear all</button>
         </div>
+        <div class="vehicle-switcher">
+          <span class="switcher-label">Vehicle</span>
+          <select class="vehicle-select edit-input" aria-label="Select active vehicle"></select>
+        </div>
 
         <div id="logEmpty" class="empty-state">
           <div class="empty-illo">
@@ -298,6 +310,51 @@
           <div id="logCards"></div>
         </div>
         <div class="scroll-bottom-pad"></div>
+      </div>
+    </div>
+
+  
+    <!-- VEHICLES -->
+    <div class="tab-view" id="tab-vehicles">
+      <div class="scroll-area">
+        <div class="page-title-row">
+          <h2 class="page-title">My Vehicles</h2>
+          <button class="btn-primary vehicle-add-trigger" id="showVehicleForm" type="button">＋ Add vehicle</button>
+        </div>
+        <div class="card auth-panel" id="authPanel">
+          <div class="auth-heading"><strong>Private Google Sheets sync</strong><span id="authStatus">Local mode · data is saved in this browser</span></div>
+          <div id="authSetupHint" class="auth-hint">Connect your private Google Sheet by deploying the included Apps Script web app. Your sheet and vehicle photos stay in your Google account.</div>
+          <div id="authControls" class="auth-controls hidden">
+            <input class="edit-input" id="authEmail" type="email" placeholder="Google account" disabled />
+            <input class="edit-input" id="authPassword" type="password" placeholder="Not required" disabled />
+          </div>
+        </div>
+        <div id="vehicleForm" class="card vehicle-form hidden">
+          <div class="vehicle-photo-picker">
+            <div id="vehiclePhotoPreviews" class="vehicle-photo-previews"></div>
+            <label class="photo-pick-label" for="vehiclePhotoInput">＋ Add vehicle pictures</label>
+            <input id="vehiclePhotoInput" type="file" accept="image/*" multiple />
+            <span class="photo-help">Choose multiple photos. Images are resized before saving.</span>
+          </div>
+          <div class="vehicle-fields">
+            <label>Vehicle name<input id="vehicleName" class="edit-input" placeholder="e.g. City, Himalayan" required /></label>
+            <label>Brand<input id="vehicleBrand" class="edit-input" placeholder="e.g. Honda" /></label>
+            <label>Model<input id="vehicleModel" class="edit-input" placeholder="e.g. City ZX" /></label>
+            <label>Registration number<input id="vehicleReg" class="edit-input" placeholder="e.g. DL 01 AB 1234" /></label>
+            <label>Vehicle type<select id="vehicleType" class="edit-input"><option value="Car">Car</option><option value="Bike">Bike</option><option value="Scooter">Scooter</option><option value="Other">Other</option></select></label>
+            <div class="edit-btns"><button class="eb-cancel" id="cancelVehicle" type="button">Cancel</button><button class="eb-save" id="saveVehicle" type="button">Save vehicle</button></div>
+          </div>
+        </div>
+        <div id="vehicleList" class="vehicle-list"></div>
+      </div>
+    </div>
+
+    <div class="tab-view" id="tab-overview">
+      <div class="scroll-area">
+        <div class="page-title-row"><h2 class="page-title">Overview</h2></div>
+        <div class="card stat-list" id="overviewTotals"></div>
+        <div class="section-label">Vehicle breakdown</div>
+        <div id="overviewVehicles" class="vehicle-list"></div>
       </div>
     </div>
 
@@ -336,8 +393,18 @@
       </span>
       <span class="nav-label">Log</span>
     </button>
-  </nav>
+  
+    <button class="nav-item" data-tab="tab-vehicles" id="navVehicles" type="button">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13l2-5h14l2 5v6h-3v-3H6v3H3z"/><circle cx="7" cy="13" r="1"/><circle cx="17" cy="13" r="1"/></svg></span>
+      <span class="nav-label">Vehicles</span>
+    </button>
+    <button class="nav-item" data-tab="tab-overview" id="navOverview" type="button">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 6-7"/></svg></span>
+      <span class="nav-label">Overview</span>
+    </button>
+</nav>
 
+  <script src="apps-script-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

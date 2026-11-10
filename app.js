@@ -921,7 +921,24 @@ async function loadCloudData() {
       ? selectedVehicleId : vehicles[0].id;
   } else {
     const vehicleMap = new Map(remoteVehicles.map(vehicle => [vehicle.id, vehicle]));
-    vehicles.forEach(vehicle => vehicleMap.set(vehicle.id, vehicle));
+    vehicles.forEach(vehicle => {
+      const remoteVehicle = vehicleMap.get(vehicle.id);
+      if (!remoteVehicle) {
+        vehicleMap.set(vehicle.id, vehicle);
+        return;
+      }
+      // Keep offline additions, but prefer freshly signed URLs from the server
+      // for photos that already exist in cloud storage.
+      const mergedPhotos = [...(remoteVehicle.photos || [])];
+      (vehicle.photos || []).forEach(localPhoto => {
+        if (localPhoto.dataUrl) {
+          mergedPhotos.push(localPhoto);
+        } else if (localPhoto.path && !mergedPhotos.some(photo => photo.path === localPhoto.path)) {
+          mergedPhotos.push(localPhoto);
+        }
+      });
+      vehicleMap.set(vehicle.id, { ...remoteVehicle, ...vehicle, photos: mergedPhotos });
+    });
     vehicles = Array.from(vehicleMap.values());
     const entryMap = new Map(remoteEntries.map(entry => [entry.id, entry]));
     entries.forEach(entry => entryMap.set(entry.id, entry));

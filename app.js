@@ -48,13 +48,15 @@ const initialState = loadAppState();
 let vehicles = initialState.vehicles;
 let entries = initialState.entries;
 let selectedVehicleId = initialState.selectedVehicleId;
+let deletedVehicleIds = Array.isArray(initialState.deletedVehicleIds) ? initialState.deletedVehicleIds : [];
+let deletedEntryIds = Array.isArray(initialState.deletedEntryIds) ? initialState.deletedEntryIds : [];
 
 function getCurrentEntries() {
   return entries.filter(entry => entry.vehicleId === selectedVehicleId);
 }
 
 function save() {
-  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId }));
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds, deletedEntryIds }));
   syncRemoteIfReady();
 }
 
@@ -310,6 +312,7 @@ clearAllBtn.addEventListener('click', () => {
   if (!currentIds.length) return;
   if (confirm('Clear all fuel entries for this vehicle? This cannot be undone.')) {
     entries = entries.filter(entry => entry.vehicleId !== selectedVehicleId);
+    deletedEntryIds.push(...currentIds);
     if (cloudClient && cloudSession && currentIds.length) cloudClient.from('fuel_entries').delete().in('id', currentIds).then(({ error }) => {
       if (error) console.error('Cloud delete failed:', error);
     });
@@ -329,6 +332,7 @@ function resetForm() {
 function deleteEntry(origIdx) {
   if (!confirm('Delete this entry?')) return;
   const deletedId = entries[origIdx]?.id;
+  if (deletedId) deletedEntryIds.push(deletedId);
   entries.splice(origIdx, 1);
   if (cloudClient && cloudSession && deletedId) cloudClient.from('fuel_entries').delete().eq('id', deletedId).then(({ error }) => {
     if (error) console.error('Cloud delete failed:', error);
@@ -766,6 +770,8 @@ function deleteVehicle(id) {
   if (vehicles.length === 1) { toast('Add another vehicle before deleting this one', 'error'); return; }
   if (!confirm('Delete ' + vehicle.name + ' and all its fuel entries? This cannot be undone.')) return;
   const removedEntryIds = entries.filter(entry => entry.vehicleId === id).map(entry => entry.id);
+  deletedVehicleIds.push(id);
+  deletedEntryIds.push(...removedEntryIds);
   if (cloudClient && cloudSession) {
     cloudClient.from('vehicles').delete().eq('id', id).then(({ error }) => {
       if (error) console.error('Cloud vehicle delete failed:', error);
@@ -818,6 +824,7 @@ const STORAGE_BUCKET = 'vehicle-photos';
 let cloudClient = null;
 let cloudSession = null;
 let cloudSyncInProgress = false;
+let cloudSyncPending = false;
 
 if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient) {
   cloudClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -887,7 +894,7 @@ async function loadCloudData() {
     return;
   }
 
-  const remoteVehicles = await Promise.all((vehicleResult.data || []).map(async row => {
+  const remoteVehicles = await Promise.all((vehicleResult.data || []).filter(row => !deletedVehicleIds.includes(row.id)).map(async row => {
     const paths = Array.isArray(row.photo_paths) ? row.photo_paths : [];
     const photos = await Promise.all(paths.map(async path => {
       const { data } = await cloudClient.storage.from(STORAGE_BUCKET).createSignedUrl(path, 3600);
@@ -899,13 +906,14 @@ async function loadCloudData() {
       photos, isStarter: false
     };
   }));
-  const remoteEntries = (entryResult.data || []).map(row => ({
+  const remoteEntries = (entryResult.data || []).filter(row => !deletedEntryIds.includes(row.id)).map(row => ({
     id: row.id, vehicleId: row.vehicle_id, date: row.fill_date,
     price: Number(row.fuel_price), odo: row.odometer == null ? null : Number(row.odometer),
     amount: Number(row.amount_paid), fullTank: row.full_tank !== false
   }));
 
-  const hasLocalWork = entries.length > 0 || vehicles.some(vehicle => !vehicle.isStarter && vehicle.name !== 'My Vehicle');
+  const hasLocalWork = entries.length > 0 || deletedVehicleIds.length > 0 || deletedEntryIds.length > 0 ||
+    vehicles.some(vehicle => !vehicle.isStarter && vehicle.name !== 'My Vehicle');
   if (remoteVehicles.length && !hasLocalWork) {
     vehicles = remoteVehicles;
     entries = remoteEntries;
@@ -925,7 +933,7 @@ async function loadCloudData() {
     vehicles = [{ id: starterId, name: 'My Vehicle', type: 'Car', photos: [], isStarter: true }];
     selectedVehicleId = starterId;
   }
-  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId }));
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds, deletedEntryIds }));
   renderAll();
   updatePreview();
   updateCloudStatus('Cloud data loaded · syncing local changes…');
@@ -934,12 +942,14 @@ async function loadCloudData() {
 }
 
 async function syncRemoteIfReady() {
-  if (!cloudClient || !cloudSession || cloudSyncInProgress) return;
+  if (!cloudClient || !cloudSession) return;
+  if (cloudSyncInProgress) { cloudSyncPending = true; return; }
   syncRemote();
 }
 
 async function syncRemote() {
-  if (!cloudClient || !cloudSession || cloudSyncInProgress) return;
+  if (!cloudClient || !cloudSession) return;
+  if (cloudSyncInProgress) { cloudSyncPending = true; return; }
   cloudSyncInProgress = true;
   updateCloudStatus('Syncing…');
   try {
@@ -962,6 +972,15 @@ async function syncRemote() {
       }
     }
 
+    if (deletedEntryIds.length) {
+      const { error } = await cloudClient.from('fuel_entries').delete().in('id', deletedEntryIds);
+      if (error) throw error;
+    }
+    if (deletedVehicleIds.length) {
+      const { error } = await cloudClient.from('vehicles').delete().in('id', deletedVehicleIds);
+      if (error) throw error;
+    }
+
     const vehicleRows = vehicles.map(vehicle => ({
       id: vehicle.id, user_id: userId, name: vehicle.name, brand: vehicle.brand || null,
       model: vehicle.model || null, registration_number: vehicle.registrationNumber || null,
@@ -982,13 +1001,19 @@ async function syncRemote() {
       const { error } = await cloudClient.from('fuel_entries').upsert(entryRows, { onConflict: 'id' });
       if (error) throw error;
     }
-    localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId }));
+    deletedVehicleIds = [];
+    deletedEntryIds = [];
+    localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds, deletedEntryIds }));
     updateCloudStatus();
   } catch (error) {
     console.error('FuelTrack cloud sync failed:', error);
     updateCloudStatus('Sync issue: ' + (error.message || 'Check your database setup'));
   } finally {
     cloudSyncInProgress = false;
+    if (cloudSyncPending) {
+      cloudSyncPending = false;
+      syncRemote();
+    }
   }
 }
 

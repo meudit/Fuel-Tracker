@@ -4,40 +4,59 @@
    from consecutive entries sorted by date.
    ============================================================ */
 
-const STORAGE_KEY = 'fueltrack_entries';
+const DATA_KEY = 'fueltrack_data_v2';
+const LEGACY_STORAGE_KEY = 'fueltrack_entries';
+const THEME_KEY = 'fueltrack_theme';
 
-// ── Helpers ──────────────────────────────────────────────────
-
-function fmt2(val) {
-  if (val === null || val === undefined || isNaN(val)) return null;
-  return parseFloat(val.toFixed(2));
-}
-function disp(val, suffix = '') {
-  if (val === null || val === undefined || isNaN(val)) return '—';
-  return val.toFixed(2) + (suffix ? ' ' + suffix : '');
-}
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-function fmtDate(iso) {
-  if (!iso) return '—';
-  const [y, m, d] = iso.split('-');
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${parseInt(d)} ${months[parseInt(m)-1]} '${y.slice(2)}`;
-}
-function todayLabel() {
-  return new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long' });
+function makeId() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
 }
 
-// ── Storage ──────────────────────────────────────────────────
+function loadAppState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DATA_KEY));
+    if (saved && Array.isArray(saved.vehicles) && Array.isArray(saved.entries)) {
+      const safeVehicles = saved.vehicles.map(v => ({ ...v, photos: Array.isArray(v.photos) ? v.photos : [] }));
+      const safeEntries = saved.entries.map(e => ({
+        ...e, id: e.id || makeId(), vehicleId: e.vehicleId || safeVehicles[0]?.id
+      }));
+      if (safeVehicles.length) {
+        return { vehicles: safeVehicles, entries: safeEntries,
+          selectedVehicleId: safeVehicles.some(v => v.id === saved.selectedVehicleId)
+            ? saved.selectedVehicleId : safeVehicles[0].id };
+      }
+    }
+  } catch (error) { console.warn('Could not read FuelTrack data; starting fresh.', error); }
 
-function load()  { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
-function save(e) { localStorage.setItem(STORAGE_KEY, JSON.stringify(e)); }
+  let legacyEntries = [];
+  try { legacyEntries = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY)) || []; } catch {}
+  const starterId = makeId();
+  return {
+    vehicles: [{ id: starterId, name: 'My Vehicle', brand: '', model: '',
+      registrationNumber: '', type: 'Car', photos: [], isStarter: true }],
+    entries: legacyEntries.map(entry => ({ ...entry, id: makeId(), vehicleId: starterId })),
+    selectedVehicleId: starterId
+  };
+}
 
-// ── State ─────────────────────────────────────────────────────
+const initialState = loadAppState();
+let vehicles = initialState.vehicles;
+let entries = initialState.entries;
+let selectedVehicleId = initialState.selectedVehicleId;
 
-let entries = load();
+function getCurrentEntries() {
+  return entries.filter(entry => entry.vehicleId === selectedVehicleId);
+}
+
+function save() {
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId }));
+  syncRemoteIfReady();
+}
 
 // ── Derived calculations ──────────────────────────────────────
 // Entries are stored in insertion order but may have any dates.
@@ -52,6 +71,7 @@ function isFullTank(entry) {
 function getEnrichedEntries() {
   const sorted = entries
     .map((e, i) => ({ ...e, origIdx: i }))
+    .filter(e => e.vehicleId === selectedVehicleId)
     .sort((a, b) => a.date.localeCompare(b.date) || a.origIdx - b.origIdx);
 
   let lastFullTank = null;
@@ -93,6 +113,28 @@ const inputOdo     = document.getElementById('inputOdo');
 const inputAmount  = document.getElementById('inputAmount');
 const inputFullTank = document.getElementById('inputFullTank');
 const themeToggle = document.getElementById('themeToggle');
+const vehicleSelects = document.querySelectorAll('.vehicle-select');
+const vehicleListEl = document.getElementById('vehicleList');
+const vehicleFormEl = document.getElementById('vehicleForm');
+const vehicleNameInput = document.getElementById('vehicleName');
+const vehicleBrandInput = document.getElementById('vehicleBrand');
+const vehicleModelInput = document.getElementById('vehicleModel');
+const vehicleRegInput = document.getElementById('vehicleReg');
+const vehicleTypeInput = document.getElementById('vehicleType');
+const vehiclePhotoInput = document.getElementById('vehiclePhotoInput');
+const vehiclePhotoPreviews = document.getElementById('vehiclePhotoPreviews');
+const overviewTotalsEl = document.getElementById('overviewTotals');
+const overviewVehiclesEl = document.getElementById('overviewVehicles');
+const authStatusEl = document.getElementById('authStatus');
+const authSetupHintEl = document.getElementById('authSetupHint');
+const authControlsEl = document.getElementById('authControls');
+const authEmailInput = document.getElementById('authEmail');
+const authPasswordInput = document.getElementById('authPassword');
+const signInBtn = document.getElementById('signInBtn');
+const signUpBtn = document.getElementById('signUpBtn');
+const signOutBtn = document.getElementById('signOutBtn');
+let editingVehicleId = null;
+let pendingVehiclePhotos = [];
 const addForm      = document.getElementById('addForm');
 const clearBtn     = document.getElementById('clearBtn');
 const clearAllBtn  = document.getElementById('clearAllBtn');
@@ -141,7 +183,6 @@ inputDate.value = todayISO();
 if (todayLabelEl) todayLabelEl.textContent = todayLabel();
 
 // Remember the user's preferred appearance.
-const THEME_KEY = 'fueltrack_theme';
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (themeToggle) {
@@ -167,7 +208,7 @@ function updatePreview() {
 
   const chronological = entries
     .map((entry, index) => ({ ...entry, _index: index }))
-    .filter(entry => entry.date <= currentDate)
+    .filter(entry => entry.vehicleId === selectedVehicleId && entry.date <= currentDate)
     .sort((a, b) => a.date.localeCompare(b.date) || a._index - b._index);
   const withOdo = chronological.filter(entry => entry.odo != null);
   const lastEntry = withOdo[withOdo.length - 1] || null;
@@ -247,7 +288,7 @@ addForm.addEventListener('submit', e => {
 
   // Warn if odo looks wrong (lower than last)
   const sorted = [...entries]
-    .filter(e => e.date <= date && e.odo != null)
+    .filter(e => e.vehicleId === selectedVehicleId && e.date <= date && e.odo != null)
     .sort((a, b) => a.date.localeCompare(b.date));
   const lastOdo = sorted.length ? sorted[sorted.length - 1].odo : null;
   if (odo !== null && lastOdo !== null && odo <= lastOdo) {
@@ -256,8 +297,8 @@ addForm.addEventListener('submit', e => {
   }
 
   // Store only raw fields; derived values calculated at render time
-  entries.push({ date, price, odo, amount, fullTank: inputFullTank.checked });
-  save(entries);
+  entries.push({ id: makeId(), vehicleId: selectedVehicleId, date, price, odo, amount, fullTank: inputFullTank.checked });
+  save();
   renderAll();
   resetForm();
   toast('Entry added', 'success');
@@ -265,9 +306,14 @@ addForm.addEventListener('submit', e => {
 
 clearBtn.addEventListener('click', resetForm);
 clearAllBtn.addEventListener('click', () => {
-  if (!entries.length) return;
-  if (confirm('Clear all fuel entries? This cannot be undone.')) {
-    entries = []; save(entries); renderAll(); toast('All entries cleared', 'error');
+  const currentIds = getCurrentEntries().map(entry => entry.id);
+  if (!currentIds.length) return;
+  if (confirm('Clear all fuel entries for this vehicle? This cannot be undone.')) {
+    entries = entries.filter(entry => entry.vehicleId !== selectedVehicleId);
+    if (cloudClient && cloudSession && currentIds.length) cloudClient.from('fuel_entries').delete().in('id', currentIds).then(({ error }) => {
+      if (error) console.error('Cloud delete failed:', error);
+    });
+    save(); renderAll(); toast('Vehicle entries cleared', 'error');
   }
 });
 
@@ -282,8 +328,12 @@ function resetForm() {
 
 function deleteEntry(origIdx) {
   if (!confirm('Delete this entry?')) return;
+  const deletedId = entries[origIdx]?.id;
   entries.splice(origIdx, 1);
-  save(entries);
+  if (cloudClient && cloudSession && deletedId) cloudClient.from('fuel_entries').delete().eq('id', deletedId).then(({ error }) => {
+    if (error) console.error('Cloud delete failed:', error);
+  });
+  save();
   renderAll();
   toast('Entry deleted', 'error');
 }
@@ -302,8 +352,8 @@ function saveEdit(origIdx, card) {
 
   // Store only raw fields; derived values re-computed at render
   const fullTank = card.querySelector('.ei-full-tank').checked;
-  entries[origIdx] = { date, price, odo, amount, fullTank };
-  save(entries);
+  entries[origIdx] = { ...entries[origIdx], date, price, odo, amount, fullTank };
+  save();
   renderAll();
   toast('Entry updated', 'success');
 }
@@ -311,21 +361,26 @@ function saveEdit(origIdx, card) {
 // ── Render ────────────────────────────────────────────────────
 
 function renderAll() {
+  renderVehicleSelectors();
   renderHeader();
   renderInsights();
   renderLog();
+  renderVehicles();
+  renderOverview();
 }
 
 function renderHeader() {
-  totalEntriesVal.textContent = entries.length;
-  const total = entries.reduce((s, e) => s + (e.amount || 0), 0);
+  const currentEntries = getCurrentEntries();
+  totalEntriesVal.textContent = currentEntries.length;
+  const total = currentEntries.reduce((s, e) => s + (e.amount || 0), 0);
   totalSpendVal.textContent = '₹' + total.toLocaleString('en-IN', {
     minimumFractionDigits: 0, maximumFractionDigits: 0
   });
 }
 
 function renderInsights() {
-  if (!entries.length) {
+  const currentEntries = getCurrentEntries();
+  if (!currentEntries.length) {
     insightsEmpty.classList.remove('hidden');
     insightsContent.classList.add('hidden');
     return;
@@ -359,7 +414,7 @@ function renderInsights() {
 }
 
 function renderLog() {
-  if (!entries.length) {
+  if (!getCurrentEntries().length) {
     logEmpty.classList.remove('hidden');
     logContent.classList.add('hidden');
     return;

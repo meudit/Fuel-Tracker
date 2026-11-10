@@ -816,223 +816,150 @@ document.querySelectorAll('.vehicle-select').forEach(select => {
   select.addEventListener('change', () => selectVehicle(select.value));
 });
 
-/* ── Supabase cloud database (optional; local-first) ─────────── */
-
-const SUPABASE_URL = window.FUELTRACK_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = window.FUELTRACK_SUPABASE_ANON_KEY || '';
-const STORAGE_BUCKET = 'vehicle-photos';
-let cloudClient = null;
-let cloudSession = null;
+/* ── Google Sheets + Apps Script sync (personal account) ───────
+   The web app is deployed as "user accessing the web app" and restricted
+   to the owner's Google account. Reads use JSONP; writes use a no-cors
+   POST, then the client verifies by reading the saved snapshot.
+*/
+const APPS_SCRIPT_URL = window.FUELTRACK_APPS_SCRIPT_URL || '';
 let cloudSyncInProgress = false;
 let cloudSyncPending = false;
-
-if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient) {
-  cloudClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  if (authControlsEl) authControlsEl.classList.remove('hidden');
-  if (authSetupHintEl) authSetupHintEl.classList.add('hidden');
-  if (signInBtn) signInBtn.addEventListener('click', signInToCloud);
-  if (signUpBtn) signUpBtn.addEventListener('click', signUpToCloud);
-  if (signOutBtn) signOutBtn.addEventListener('click', async () => {
-    const { error } = await cloudClient.auth.signOut();
-    if (error) toast(error.message, 'error');
-    else { cloudSession = null; updateCloudStatus(); toast('Signed out', 'success'); }
-  });
-  initialiseCloudAuth();
-} else if (authStatusEl) {
-  authStatusEl.textContent = 'Local mode · data is saved in this browser';
-}
+let cloudReady = false;
 
 function updateCloudStatus(message) {
   if (!authStatusEl) return;
-  if (!cloudClient) authStatusEl.textContent = 'Local mode · data is saved in this browser';
-  else if (message) authStatusEl.textContent = message;
-  else if (cloudSession) authStatusEl.textContent = 'Connected as ' + cloudSession.user.email + ' · cloud sync enabled';
-  else authStatusEl.textContent = 'Cloud configured · sign in to sync across devices';
-  if (signOutBtn) signOutBtn.classList.toggle('hidden', !cloudSession);
+  authStatusEl.textContent = message || (cloudReady
+    ? 'Google Sheets connected · private to your Google account'
+    : 'Local mode · configure your private Google Sheets connection');
+  if (authSetupHintEl) authSetupHintEl.classList.toggle('hidden', cloudReady);
+  if (authControlsEl) authControlsEl.classList.add('hidden');
 }
 
-async function initialiseCloudAuth() {
-  const { data, error } = await cloudClient.auth.getSession();
-  if (error) updateCloudStatus('Could not read account session: ' + error.message);
-  cloudSession = data ? data.session : null;
-  updateCloudStatus();
-  if (cloudSession) await loadCloudData();
-  cloudClient.auth.onAuthStateChange((event, session) => {
-    cloudSession = session;
-    updateCloudStatus();
-    if (session && event !== 'INITIAL_SESSION') loadCloudData();
+function readGoogleSnapshot() {
+  return new Promise((resolve, reject) => {
+    if (!APPS_SCRIPT_URL) return reject(new Error('Add your Apps Script web app URL to apps-script-config.js.'));
+    const callbackName = 'fuelTrackRead_' + makeId().replace(/-/g, '');
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Google Sheets read timed out. Check that the web app is deployed for your Google account.'));
+    }, 20000);
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+    }
+    window[callbackName] = payload => {
+      cleanup();
+      if (!payload || payload.ok !== true) return reject(new Error(payload?.error || 'Could not read Google Sheets.'));
+      resolve(payload.data);
+    };
+    script.onerror = () => { cleanup(); reject(new Error('Could not reach the Apps Script web app.')); };
+    script.src = APPS_SCRIPT_URL + '?action=read&callback=' + encodeURIComponent(callbackName) + '&_=' + Date.now();
+    document.head.appendChild(script);
   });
 }
 
-async function signInToCloud() {
-  const email = authEmailInput.value.trim();
-  const password = authPasswordInput.value;
-  if (!email || !password) { toast('Enter your email and password', 'error'); return; }
-  const { error } = await cloudClient.auth.signInWithPassword({ email, password });
-  if (error) toast(error.message, 'error');
-  else toast('Signed in', 'success');
-}
-
-async function signUpToCloud() {
-  const email = authEmailInput.value.trim();
-  const password = authPasswordInput.value;
-  if (!email || password.length < 8) { toast('Enter an email and a password of at least 8 characters', 'error'); return; }
-  const { error } = await cloudClient.auth.signUp({ email, password });
-  if (error) toast(error.message, 'error');
-  else toast('Account created. Check your email if confirmation is enabled.', 'success');
-}
-
-async function loadCloudData() {
-  if (!cloudClient || !cloudSession) return;
-  updateCloudStatus('Loading your cloud data…');
-  const [vehicleResult, entryResult] = await Promise.all([
-    cloudClient.from('vehicles').select('*').order('created_at', { ascending: true }),
-    cloudClient.from('fuel_entries').select('*').order('fill_date', { ascending: true })
-  ]);
-  if (vehicleResult.error || entryResult.error) {
-    updateCloudStatus('Database setup required: ' + ((vehicleResult.error || entryResult.error).message));
-    return;
+async function writeGoogleSnapshot() {
+  if (!APPS_SCRIPT_URL) return;
+  const snapshot = {
+    action: 'save',
+    vehicles: vehicles.map(vehicle => ({
+      ...vehicle,
+      photos: (vehicle.photos || []).map(photo => ({ ...photo }))
+    })),
+    entries,
+    selectedVehicleId
+  };
+  // Apps Script ContentService redirects responses; no-cors avoids a browser
+  // preflight. A subsequent authenticated JSONP read verifies persistence.
+  await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(snapshot)
+  });
+  await new Promise(resolve => setTimeout(resolve, 900));
+  const remote = await readGoogleSnapshot();
+  if (!remote || !Array.isArray(remote.vehicles) || !Array.isArray(remote.entries)) {
+    throw new Error('Google Sheets did not return a valid saved snapshot.');
   }
-
-  const remoteVehicles = await Promise.all((vehicleResult.data || []).filter(row => !deletedVehicleIds.includes(row.id)).map(async row => {
-    const paths = Array.isArray(row.photo_paths) ? row.photo_paths : [];
-    const photos = await Promise.all(paths.map(async path => {
-      const { data } = await cloudClient.storage.from(STORAGE_BUCKET).createSignedUrl(path, 3600);
-      return { id: path, path, url: data?.signedUrl || '' };
-    }));
-    return {
-      id: row.id, name: row.name, brand: row.brand || '', model: row.model || '',
-      registrationNumber: row.registration_number || '', type: row.vehicle_type || 'Other',
-      photos, isStarter: false
-    };
-  }));
-  const remoteEntries = (entryResult.data || []).filter(row => !deletedEntryIds.includes(row.id)).map(row => ({
-    id: row.id, vehicleId: row.vehicle_id, date: row.fill_date,
-    price: Number(row.fuel_price), odo: row.odometer == null ? null : Number(row.odometer),
-    amount: Number(row.amount_paid), fullTank: row.full_tank !== false
-  }));
-
-  const hasLocalWork = entries.length > 0 || deletedVehicleIds.length > 0 || deletedEntryIds.length > 0 ||
-    vehicles.some(vehicle => !vehicle.isStarter && vehicle.name !== 'My Vehicle');
-  if (remoteVehicles.length && !hasLocalWork) {
-    vehicles = remoteVehicles;
-    entries = remoteEntries;
-    selectedVehicleId = vehicles.some(vehicle => vehicle.id === selectedVehicleId)
-      ? selectedVehicleId : vehicles[0].id;
-  } else {
-    const vehicleMap = new Map(remoteVehicles.map(vehicle => [vehicle.id, vehicle]));
-    vehicles.forEach(vehicle => {
-      const remoteVehicle = vehicleMap.get(vehicle.id);
-      if (!remoteVehicle) {
-        vehicleMap.set(vehicle.id, vehicle);
-        return;
-      }
-      // Keep offline additions, but prefer freshly signed URLs from the server
-      // for photos that already exist in cloud storage.
-      const mergedPhotos = [...(remoteVehicle.photos || [])];
-      (vehicle.photos || []).forEach(localPhoto => {
-        if (localPhoto.dataUrl) {
-          mergedPhotos.push(localPhoto);
-        } else if (localPhoto.path && !mergedPhotos.some(photo => photo.path === localPhoto.path)) {
-          mergedPhotos.push(localPhoto);
-        }
-      });
-      vehicleMap.set(vehicle.id, { ...remoteVehicle, ...vehicle, photos: mergedPhotos });
-    });
-    vehicles = Array.from(vehicleMap.values());
-    const entryMap = new Map(remoteEntries.map(entry => [entry.id, entry]));
-    entries.forEach(entry => entryMap.set(entry.id, entry));
-    entries = Array.from(entryMap.values());
-    if (!vehicles.some(vehicle => vehicle.id === selectedVehicleId)) selectedVehicleId = vehicles[0]?.id;
-  }
-  if (!vehicles.length) {
-    const starterId = makeId();
-    vehicles = [{ id: starterId, name: 'My Vehicle', type: 'Car', photos: [], isStarter: true }];
-    selectedVehicleId = starterId;
-  }
-  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds, deletedEntryIds }));
+  vehicles = remote.vehicles;
+  entries = remote.entries;
+  if (!vehicles.some(vehicle => vehicle.id === selectedVehicleId)) selectedVehicleId = vehicles[0]?.id;
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds: [], deletedEntryIds: [] }));
   renderAll();
   updatePreview();
-  updateCloudStatus('Cloud data loaded · syncing local changes…');
-  await syncRemote();
-  updateCloudStatus();
+}
+
+async function initialiseGoogleSync() {
+  if (!APPS_SCRIPT_URL) {
+    updateCloudStatus();
+    return;
+  }
+  updateCloudStatus('Connecting to your private Google Sheet…');
+  try {
+    const remote = await readGoogleSnapshot();
+    if (remote && Array.isArray(remote.vehicles) && Array.isArray(remote.entries)) {
+      const localHasData = entries.length > 0 || vehicles.some(v => !v.isStarter && v.name !== 'My Vehicle');
+      if (remote.vehicles.length && !localHasData) {
+        vehicles = remote.vehicles;
+        entries = remote.entries;
+        selectedVehicleId = vehicles.some(v => v.id === selectedVehicleId) ? selectedVehicleId : vehicles[0].id;
+      } else if (localHasData) {
+        const vMap = new Map(remote.vehicles.map(v => [v.id, v]));
+        vehicles.forEach(v => vMap.set(v.id, { ...vMap.get(v.id), ...v }));
+        const eMap = new Map(remote.entries.map(e => [e.id, e]));
+        entries.forEach(e => eMap.set(e.id, e));
+        vehicles = Array.from(vMap.values());
+        entries = Array.from(eMap.values());
+        if (!vehicles.some(v => v.id === selectedVehicleId)) selectedVehicleId = vehicles[0]?.id;
+      }
+      if (!vehicles.length) {
+        const id = makeId();
+        vehicles = [{ id, name: 'My Vehicle', type: 'Car', photos: [], isStarter: true }];
+        selectedVehicleId = id;
+      }
+      localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds: [], deletedEntryIds: [] }));
+      renderAll();
+      updatePreview();
+      cloudReady = true;
+      updateCloudStatus('Connected · Google Sheets and Drive are private to your Google account');
+      if (localHasData) await writeGoogleSnapshot();
+    }
+  } catch (error) {
+    console.error('FuelTrack Google sync:', error);
+    updateCloudStatus('Google sync unavailable · local data is safe in this browser');
+  }
 }
 
 async function syncRemoteIfReady() {
-  if (!cloudClient || !cloudSession) return;
-  if (cloudSyncInProgress) { cloudSyncPending = true; return; }
-  syncRemote();
-}
-
-async function syncRemote() {
-  if (!cloudClient || !cloudSession) return;
+  if (!APPS_SCRIPT_URL || !cloudReady) return;
   if (cloudSyncInProgress) { cloudSyncPending = true; return; }
   cloudSyncInProgress = true;
-  updateCloudStatus('Syncing…');
+  updateCloudStatus('Saving to Google Sheets…');
   try {
-    const userId = cloudSession.user.id;
-    for (const vehicle of vehicles) {
-      vehicle.photos = vehicle.photos || [];
-      for (const photo of vehicle.photos) {
-        if (photo.dataUrl && !photo.path) {
-          const blob = await fetch(photo.dataUrl).then(response => response.blob());
-          const path = userId + '/' + vehicle.id + '/' + photo.id + '.jpg';
-          const { error: uploadError } = await cloudClient.storage.from(STORAGE_BUCKET).upload(path, blob, {
-            contentType: 'image/jpeg', upsert: true
-          });
-          if (uploadError) throw uploadError;
-          photo.path = path;
-          photo.dataUrl = null;
-          const { data } = await cloudClient.storage.from(STORAGE_BUCKET).createSignedUrl(path, 3600);
-          photo.url = data?.signedUrl || '';
-        }
-      }
-    }
-
-    if (deletedEntryIds.length) {
-      const { error } = await cloudClient.from('fuel_entries').delete().in('id', deletedEntryIds);
-      if (error) throw error;
-    }
-    if (deletedVehicleIds.length) {
-      const { error } = await cloudClient.from('vehicles').delete().in('id', deletedVehicleIds);
-      if (error) throw error;
-    }
-
-    const vehicleRows = vehicles.map(vehicle => ({
-      id: vehicle.id, user_id: userId, name: vehicle.name, brand: vehicle.brand || null,
-      model: vehicle.model || null, registration_number: vehicle.registrationNumber || null,
-      vehicle_type: vehicle.type || 'Other',
-      photo_paths: (vehicle.photos || []).map(photo => photo.path).filter(Boolean)
-    }));
-    if (vehicleRows.length) {
-      const { error } = await cloudClient.from('vehicles').upsert(vehicleRows, { onConflict: 'id' });
-      if (error) throw error;
-    }
-
-    const entryRows = entries.map(entry => ({
-      id: entry.id, user_id: userId, vehicle_id: entry.vehicleId,
-      fill_date: entry.date, fuel_price: entry.price, odometer: entry.odo,
-      amount_paid: entry.amount, full_tank: entry.fullTank !== false
-    }));
-    if (entryRows.length) {
-      const { error } = await cloudClient.from('fuel_entries').upsert(entryRows, { onConflict: 'id' });
-      if (error) throw error;
-    }
-    deletedVehicleIds = [];
-    deletedEntryIds = [];
-    localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId, deletedVehicleIds, deletedEntryIds }));
-    updateCloudStatus();
+    await writeGoogleSnapshot();
+    cloudReady = true;
+    updateCloudStatus('All changes saved to your private Google Sheet');
   } catch (error) {
-    console.error('FuelTrack cloud sync failed:', error);
-    updateCloudStatus('Sync issue: ' + (error.message || 'Check your database setup'));
+    console.error('FuelTrack Google sync failed:', error);
+    updateCloudStatus('Sync issue · local changes are saved; ' + (error.message || 'try again'));
   } finally {
     cloudSyncInProgress = false;
     if (cloudSyncPending) {
       cloudSyncPending = false;
-      syncRemote();
+      syncRemoteIfReady();
     }
   }
 }
+
+if (signInBtn) signInBtn.addEventListener('click', () => toast('Google access is controlled by your Apps Script deployment.', 'success'));
+if (signUpBtn) signUpBtn.addEventListener('click', () => toast('This is a personal-only connection; no separate account is needed.', 'success'));
+if (signOutBtn) signOutBtn.classList.add('hidden');
+if (APPS_SCRIPT_URL) initialiseGoogleSync();
+else updateCloudStatus();
 
 // ── Toast ─────────────────────────────────────────────────────
 

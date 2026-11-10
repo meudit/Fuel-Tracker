@@ -576,6 +576,422 @@ function renderLog() {
   });
 }
 
+
+/* ── Multi-vehicle management ────────────────────────────────── */
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function renderVehicleSelectors() {
+  document.querySelectorAll('.vehicle-select').forEach(select => {
+    select.innerHTML = vehicles.map(vehicle =>
+      '<option value="' + escapeHtml(vehicle.id) + '"' +
+      (vehicle.id === selectedVehicleId ? ' selected' : '') + '>' +
+      escapeHtml(vehicle.name) + '</option>'
+    ).join('');
+    select.disabled = vehicles.length <= 1;
+  });
+}
+
+function photoSource(photo) {
+  return photo ? (photo.url || photo.dataUrl || '') : '';
+}
+
+function renderVehicles() {
+  if (!vehicleListEl) return;
+  if (!vehicles.length) {
+    vehicleListEl.innerHTML = '<div class="empty-state"><p class="empty-title">No vehicles yet</p><p class="empty-sub">Add a vehicle to start tracking fuel.</p></div>';
+    return;
+  }
+
+  vehicleListEl.innerHTML = vehicles.map(vehicle => {
+    const current = entries.filter(entry => entry.vehicleId === vehicle.id);
+    const spent = current.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const firstPhoto = photoSource((vehicle.photos || [])[0]);
+    const cover = firstPhoto
+      ? '<img class="vehicle-cover" src="' + escapeHtml(firstPhoto) + '" alt="' + escapeHtml(vehicle.name) + '">'
+      : '<div class="vehicle-cover vehicle-placeholder">' + (vehicle.type === 'Bike' ? '🏍️' : vehicle.type === 'Scooter' ? '🛵' : '🚘') + '</div>';
+    const gallery = (vehicle.photos || []).slice(1).map(photo => {
+      const src = photoSource(photo);
+      return src ? '<img class="vehicle-thumb" src="' + escapeHtml(src) + '" alt="Vehicle photo">' : '';
+    }).join('');
+    return '<article class="vehicle-card">' +
+      '<div class="vehicle-card-media">' + cover + '</div>' +
+      '<div class="vehicle-card-content">' +
+      '<div class="vehicle-card-title-row"><div><div class="vehicle-card-title">' + escapeHtml(vehicle.name) + '</div>' +
+      '<div class="vehicle-card-sub">' + escapeHtml([vehicle.brand, vehicle.model].filter(Boolean).join(' ')) + '</div></div>' +
+      '<span class="vehicle-type-pill">' + escapeHtml(vehicle.type || 'Other') + '</span></div>' +
+      '<div class="vehicle-meta">' + escapeHtml(vehicle.registrationNumber || 'No registration number') + '</div>' +
+      '<div class="vehicle-metrics"><div><strong>' + current.length + '</strong><span>Fills</span></div>' +
+      '<div><strong>₹' + spent.toLocaleString('en-IN', { maximumFractionDigits: 0 }) + '</strong><span>Total spent</span></div></div>' +
+      (gallery ? '<div class="vehicle-gallery">' + gallery + '</div>' : '') +
+      '<div class="vehicle-card-actions">' +
+      '<button class="lc-btn lc-btn-edit" data-vehicle-select="' + escapeHtml(vehicle.id) + '" type="button">Use vehicle</button>' +
+      '<button class="lc-btn lc-btn-edit" data-vehicle-edit="' + escapeHtml(vehicle.id) + '" type="button">Edit</button>' +
+      '<button class="lc-btn lc-btn-del" data-vehicle-delete="' + escapeHtml(vehicle.id) + '" type="button">Delete</button>' +
+      '</div></div></article>';
+  }).join('');
+
+  vehicleListEl.querySelectorAll('[data-vehicle-select]').forEach(button => {
+    button.addEventListener('click', () => selectVehicle(button.dataset.vehicleSelect));
+  });
+  vehicleListEl.querySelectorAll('[data-vehicle-edit]').forEach(button => {
+    button.addEventListener('click', () => openVehicleForm(button.dataset.vehicleEdit));
+  });
+  vehicleListEl.querySelectorAll('[data-vehicle-delete]').forEach(button => {
+    button.addEventListener('click', () => deleteVehicle(button.dataset.vehicleDelete));
+  });
+}
+
+function renderOverview() {
+  if (!overviewTotalsEl || !overviewVehiclesEl) return;
+  const totalSpent = entries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  overviewTotalsEl.innerHTML =
+    '<div class="stat-row"><span class="stat-name">Vehicles</span><strong class="stat-val">' + vehicles.length + '</strong></div>' +
+    '<div class="row-sep"></div><div class="stat-row"><span class="stat-name">Total fuel fills</span><strong class="stat-val">' + entries.length + '</strong></div>' +
+    '<div class="row-sep"></div><div class="stat-row"><span class="stat-name">Combined fuel spend</span><strong class="stat-val stat-big">₹' + totalSpent.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</strong></div>';
+
+  overviewVehiclesEl.innerHTML = vehicles.map(vehicle => {
+    const fuelEntries = entries.filter(entry => entry.vehicleId === vehicle.id);
+    const spend = fuelEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const photo = photoSource((vehicle.photos || [])[0]);
+    const image = photo ? '<img class="overview-thumb" src="' + escapeHtml(photo) + '" alt="">' : '<div class="overview-thumb vehicle-placeholder">🚘</div>';
+    return '<button class="overview-vehicle" type="button" data-overview-vehicle="' + escapeHtml(vehicle.id) + '">' +
+      image + '<span class="overview-vehicle-info"><strong>' + escapeHtml(vehicle.name) + '</strong><small>' + fuelEntries.length + ' fills</small></span>' +
+      '<strong class="overview-spend">₹' + spend.toLocaleString('en-IN', { maximumFractionDigits: 0 }) + '</strong></button>';
+  }).join('');
+  overviewVehiclesEl.querySelectorAll('[data-overview-vehicle]').forEach(button => {
+    button.addEventListener('click', () => {
+      selectVehicle(button.dataset.overviewVehicle);
+      document.querySelector('[data-tab="tab-insights"]').click();
+    });
+  });
+}
+
+function selectVehicle(id) {
+  if (!vehicles.some(vehicle => vehicle.id === id)) return;
+  selectedVehicleId = id;
+  save();
+  renderAll();
+  updatePreview();
+}
+
+function resetVehicleForm() {
+  editingVehicleId = null;
+  pendingVehiclePhotos = [];
+  if (vehicleNameInput) vehicleNameInput.value = '';
+  if (vehicleBrandInput) vehicleBrandInput.value = '';
+  if (vehicleModelInput) vehicleModelInput.value = '';
+  if (vehicleRegInput) vehicleRegInput.value = '';
+  if (vehicleTypeInput) vehicleTypeInput.value = 'Car';
+  if (vehiclePhotoInput) vehiclePhotoInput.value = '';
+  if (vehiclePhotoPreviews) vehiclePhotoPreviews.innerHTML = '';
+  if (vehicleFormEl) vehicleFormEl.classList.add('hidden');
+}
+
+function openVehicleForm(id) {
+  resetVehicleForm();
+  const vehicle = id ? vehicles.find(item => item.id === id) : null;
+  editingVehicleId = vehicle ? vehicle.id : null;
+  if (vehicle) {
+    vehicleNameInput.value = vehicle.name || '';
+    vehicleBrandInput.value = vehicle.brand || '';
+    vehicleModelInput.value = vehicle.model || '';
+    vehicleRegInput.value = vehicle.registrationNumber || '';
+    vehicleTypeInput.value = vehicle.type || 'Other';
+    (vehicle.photos || []).forEach(photo => {
+      const src = photoSource(photo);
+      if (src) vehiclePhotoPreviews.insertAdjacentHTML('beforeend', '<img class="vehicle-thumb" src="' + escapeHtml(src) + '" alt="Existing vehicle photo">');
+    });
+  }
+  vehicleFormEl.classList.remove('hidden');
+  vehicleFormEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressVehiclePhoto(file) {
+  const dataUrl = await readAsDataUrl(file);
+  const image = new Image();
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error('Unsupported image file.'));
+    image.src = dataUrl;
+  });
+  const maxSide = 1400;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext('2d');
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.78);
+}
+
+async function saveVehicle() {
+  const name = vehicleNameInput.value.trim();
+  if (!name) { toast('Enter a vehicle name', 'error'); return; }
+  const existing = editingVehicleId ? vehicles.find(vehicle => vehicle.id === editingVehicleId) : null;
+  const vehicle = existing || { id: makeId(), photos: [] };
+  vehicle.name = name;
+  vehicle.brand = vehicleBrandInput.value.trim();
+  vehicle.model = vehicleModelInput.value.trim();
+  vehicle.registrationNumber = vehicleRegInput.value.trim();
+  vehicle.type = vehicleTypeInput.value;
+  vehicle.isStarter = false;
+  vehicle.photos = vehicle.photos || [];
+  pendingVehiclePhotos.forEach(dataUrl => vehicle.photos.push({ id: makeId(), dataUrl }));
+  if (!existing) vehicles.push(vehicle);
+  selectedVehicleId = vehicle.id;
+  save();
+  resetVehicleForm();
+  renderAll();
+  updatePreview();
+  toast(existing ? 'Vehicle updated' : 'Vehicle added', 'success');
+}
+
+function deleteVehicle(id) {
+  const vehicle = vehicles.find(item => item.id === id);
+  if (!vehicle) return;
+  if (vehicles.length === 1) { toast('Add another vehicle before deleting this one', 'error'); return; }
+  if (!confirm('Delete ' + vehicle.name + ' and all its fuel entries? This cannot be undone.')) return;
+  const removedEntryIds = entries.filter(entry => entry.vehicleId === id).map(entry => entry.id);
+  if (cloudClient && cloudSession) {
+    cloudClient.from('vehicles').delete().eq('id', id).then(({ error }) => {
+      if (error) console.error('Cloud vehicle delete failed:', error);
+    });
+    if (removedEntryIds.length) cloudClient.from('fuel_entries').delete().in('id', removedEntryIds).then(({ error }) => {
+      if (error) console.error('Cloud entry delete failed:', error);
+    });
+  }
+  vehicles = vehicles.filter(item => item.id !== id);
+  entries = entries.filter(entry => entry.vehicleId !== id);
+  if (selectedVehicleId === id) selectedVehicleId = vehicles[0].id;
+  save();
+  renderAll();
+  updatePreview();
+  toast('Vehicle deleted', 'error');
+}
+
+if (document.getElementById('showVehicleForm')) {
+  document.getElementById('showVehicleForm').addEventListener('click', () => openVehicleForm(null));
+  document.getElementById('cancelVehicle').addEventListener('click', resetVehicleForm);
+  document.getElementById('saveVehicle').addEventListener('click', saveVehicle);
+}
+if (vehiclePhotoInput) {
+  vehiclePhotoInput.addEventListener('change', async () => {
+    const files = Array.from(vehiclePhotoInput.files || []).filter(file => file.type.startsWith('image/')).slice(0, 8);
+    try {
+      pendingVehiclePhotos = await Promise.all(files.map(compressVehiclePhoto));
+      vehiclePhotoPreviews.innerHTML = pendingVehiclePhotos.map(src => '<img class="vehicle-thumb" src="' + src + '" alt="New vehicle photo preview">').join('');
+      if (editingVehicleId) {
+        const current = vehicles.find(vehicle => vehicle.id === editingVehicleId);
+        (current?.photos || []).forEach(photo => {
+          const src = photoSource(photo);
+          if (src) vehiclePhotoPreviews.insertAdjacentHTML('afterbegin', '<img class="vehicle-thumb" src="' + escapeHtml(src) + '" alt="Existing vehicle photo">');
+        });
+      }
+    } catch (error) {
+      toast(error.message || 'Could not process photo', 'error');
+    }
+  });
+}
+document.querySelectorAll('.vehicle-select').forEach(select => {
+  select.addEventListener('change', () => selectVehicle(select.value));
+});
+
+/* ── Supabase cloud database (optional; local-first) ─────────── */
+
+const SUPABASE_URL = window.FUELTRACK_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = window.FUELTRACK_SUPABASE_ANON_KEY || '';
+const STORAGE_BUCKET = 'vehicle-photos';
+let cloudClient = null;
+let cloudSession = null;
+let cloudSyncInProgress = false;
+
+if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient) {
+  cloudClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if (authControlsEl) authControlsEl.classList.remove('hidden');
+  if (authSetupHintEl) authSetupHintEl.classList.add('hidden');
+  if (signInBtn) signInBtn.addEventListener('click', signInToCloud);
+  if (signUpBtn) signUpBtn.addEventListener('click', signUpToCloud);
+  if (signOutBtn) signOutBtn.addEventListener('click', async () => {
+    const { error } = await cloudClient.auth.signOut();
+    if (error) toast(error.message, 'error');
+    else { cloudSession = null; updateCloudStatus(); toast('Signed out', 'success'); }
+  });
+  initialiseCloudAuth();
+} else if (authStatusEl) {
+  authStatusEl.textContent = 'Local mode · data is saved in this browser';
+}
+
+function updateCloudStatus(message) {
+  if (!authStatusEl) return;
+  if (!cloudClient) authStatusEl.textContent = 'Local mode · data is saved in this browser';
+  else if (message) authStatusEl.textContent = message;
+  else if (cloudSession) authStatusEl.textContent = 'Connected as ' + cloudSession.user.email + ' · cloud sync enabled';
+  else authStatusEl.textContent = 'Cloud configured · sign in to sync across devices';
+  if (signOutBtn) signOutBtn.classList.toggle('hidden', !cloudSession);
+}
+
+async function initialiseCloudAuth() {
+  const { data, error } = await cloudClient.auth.getSession();
+  if (error) updateCloudStatus('Could not read account session: ' + error.message);
+  cloudSession = data ? data.session : null;
+  updateCloudStatus();
+  if (cloudSession) await loadCloudData();
+  cloudClient.auth.onAuthStateChange((event, session) => {
+    cloudSession = session;
+    updateCloudStatus();
+    if (session && event !== 'INITIAL_SESSION') loadCloudData();
+  });
+}
+
+async function signInToCloud() {
+  const email = authEmailInput.value.trim();
+  const password = authPasswordInput.value;
+  if (!email || !password) { toast('Enter your email and password', 'error'); return; }
+  const { error } = await cloudClient.auth.signInWithPassword({ email, password });
+  if (error) toast(error.message, 'error');
+  else toast('Signed in', 'success');
+}
+
+async function signUpToCloud() {
+  const email = authEmailInput.value.trim();
+  const password = authPasswordInput.value;
+  if (!email || password.length < 8) { toast('Enter an email and a password of at least 8 characters', 'error'); return; }
+  const { error } = await cloudClient.auth.signUp({ email, password });
+  if (error) toast(error.message, 'error');
+  else toast('Account created. Check your email if confirmation is enabled.', 'success');
+}
+
+async function loadCloudData() {
+  if (!cloudClient || !cloudSession) return;
+  updateCloudStatus('Loading your cloud data…');
+  const [vehicleResult, entryResult] = await Promise.all([
+    cloudClient.from('vehicles').select('*').order('created_at', { ascending: true }),
+    cloudClient.from('fuel_entries').select('*').order('fill_date', { ascending: true })
+  ]);
+  if (vehicleResult.error || entryResult.error) {
+    updateCloudStatus('Database setup required: ' + ((vehicleResult.error || entryResult.error).message));
+    return;
+  }
+
+  const remoteVehicles = await Promise.all((vehicleResult.data || []).map(async row => {
+    const paths = Array.isArray(row.photo_paths) ? row.photo_paths : [];
+    const photos = await Promise.all(paths.map(async path => {
+      const { data } = await cloudClient.storage.from(STORAGE_BUCKET).createSignedUrl(path, 3600);
+      return { id: path, path, url: data?.signedUrl || '' };
+    }));
+    return {
+      id: row.id, name: row.name, brand: row.brand || '', model: row.model || '',
+      registrationNumber: row.registration_number || '', type: row.vehicle_type || 'Other',
+      photos, isStarter: false
+    };
+  }));
+  const remoteEntries = (entryResult.data || []).map(row => ({
+    id: row.id, vehicleId: row.vehicle_id, date: row.fill_date,
+    price: Number(row.fuel_price), odo: row.odometer == null ? null : Number(row.odometer),
+    amount: Number(row.amount_paid), fullTank: row.full_tank !== false
+  }));
+
+  const hasLocalWork = entries.length > 0 || vehicles.some(vehicle => !vehicle.isStarter && vehicle.name !== 'My Vehicle');
+  if (remoteVehicles.length && !hasLocalWork) {
+    vehicles = remoteVehicles;
+    entries = remoteEntries;
+    selectedVehicleId = vehicles.some(vehicle => vehicle.id === selectedVehicleId)
+      ? selectedVehicleId : vehicles[0].id;
+  } else {
+    const vehicleMap = new Map(remoteVehicles.map(vehicle => [vehicle.id, vehicle]));
+    vehicles.forEach(vehicle => vehicleMap.set(vehicle.id, vehicle));
+    vehicles = Array.from(vehicleMap.values());
+    const entryMap = new Map(remoteEntries.map(entry => [entry.id, entry]));
+    entries.forEach(entry => entryMap.set(entry.id, entry));
+    entries = Array.from(entryMap.values());
+    if (!vehicles.some(vehicle => vehicle.id === selectedVehicleId)) selectedVehicleId = vehicles[0]?.id;
+  }
+  if (!vehicles.length) {
+    const starterId = makeId();
+    vehicles = [{ id: starterId, name: 'My Vehicle', type: 'Car', photos: [], isStarter: true }];
+    selectedVehicleId = starterId;
+  }
+  localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId }));
+  renderAll();
+  updatePreview();
+  updateCloudStatus('Cloud data loaded · syncing local changes…');
+  await syncRemote();
+  updateCloudStatus();
+}
+
+async function syncRemoteIfReady() {
+  if (!cloudClient || !cloudSession || cloudSyncInProgress) return;
+  syncRemote();
+}
+
+async function syncRemote() {
+  if (!cloudClient || !cloudSession || cloudSyncInProgress) return;
+  cloudSyncInProgress = true;
+  updateCloudStatus('Syncing…');
+  try {
+    const userId = cloudSession.user.id;
+    for (const vehicle of vehicles) {
+      vehicle.photos = vehicle.photos || [];
+      for (const photo of vehicle.photos) {
+        if (photo.dataUrl && !photo.path) {
+          const blob = await fetch(photo.dataUrl).then(response => response.blob());
+          const path = userId + '/' + vehicle.id + '/' + photo.id + '.jpg';
+          const { error: uploadError } = await cloudClient.storage.from(STORAGE_BUCKET).upload(path, blob, {
+            contentType: 'image/jpeg', upsert: true
+          });
+          if (uploadError) throw uploadError;
+          photo.path = path;
+          photo.dataUrl = null;
+          const { data } = await cloudClient.storage.from(STORAGE_BUCKET).createSignedUrl(path, 3600);
+          photo.url = data?.signedUrl || '';
+        }
+      }
+    }
+
+    const vehicleRows = vehicles.map(vehicle => ({
+      id: vehicle.id, user_id: userId, name: vehicle.name, brand: vehicle.brand || null,
+      model: vehicle.model || null, registration_number: vehicle.registrationNumber || null,
+      vehicle_type: vehicle.type || 'Other',
+      photo_paths: (vehicle.photos || []).map(photo => photo.path).filter(Boolean)
+    }));
+    if (vehicleRows.length) {
+      const { error } = await cloudClient.from('vehicles').upsert(vehicleRows, { onConflict: 'id' });
+      if (error) throw error;
+    }
+
+    const entryRows = entries.map(entry => ({
+      id: entry.id, user_id: userId, vehicle_id: entry.vehicleId,
+      fill_date: entry.date, fuel_price: entry.price, odometer: entry.odo,
+      amount_paid: entry.amount, full_tank: entry.fullTank !== false
+    }));
+    if (entryRows.length) {
+      const { error } = await cloudClient.from('fuel_entries').upsert(entryRows, { onConflict: 'id' });
+      if (error) throw error;
+    }
+    localStorage.setItem(DATA_KEY, JSON.stringify({ vehicles, entries, selectedVehicleId }));
+    updateCloudStatus();
+  } catch (error) {
+    console.error('FuelTrack cloud sync failed:', error);
+    updateCloudStatus('Sync issue: ' + (error.message || 'Check your database setup'));
+  } finally {
+    cloudSyncInProgress = false;
+  }
+}
+
 // ── Toast ─────────────────────────────────────────────────────
 
 let _toastEl = null, _toastTimer = null;

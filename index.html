@@ -322,16 +322,11 @@
           <button class="btn-primary vehicle-add-trigger" id="showVehicleForm" type="button">＋ Add vehicle</button>
         </div>
         <div class="card auth-panel" id="authPanel">
-          <div class="auth-heading"><strong>Cloud database & sync</strong><span id="authStatus">Local mode · data is saved in this browser</span></div>
-          <div id="authSetupHint" class="auth-hint">To sync across devices, add your Supabase project URL and anon key in <code>supabase-config.js</code>.</div>
+          <div class="auth-heading"><strong>Private Google Sheets sync</strong><span id="authStatus">Local mode · data is saved in this browser</span></div>
+          <div id="authSetupHint" class="auth-hint">Connect your private Google Sheet by deploying the included Apps Script web app. Your sheet and vehicle photos stay in your Google account.</div>
           <div id="authControls" class="auth-controls hidden">
-            <input class="edit-input" id="authEmail" type="email" placeholder="Email address" autocomplete="email" />
-            <input class="edit-input" id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
-            <div class="edit-btns">
-              <button class="eb-cancel" id="signInBtn" type="button">Sign in</button>
-              <button class="eb-save" id="signUpBtn" type="button">Create account</button>
-            </div>
-            <button class="btn-ghost hidden" id="signOutBtn" type="button">Sign out</button>
+            <input class="edit-input" id="authEmail" type="email" placeholder="Google account" disabled />
+            <input class="edit-input" id="authPassword" type="password" placeholder="Not required" disabled />
           </div>
         </div>
         <div id="vehicleForm" class="card vehicle-form hidden">
@@ -409,8 +404,7 @@
     </button>
 </nav>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="supabase-config.js"></script>
+  <script src="apps-script-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
